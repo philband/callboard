@@ -1,0 +1,6 @@
+# local knowledge-base binding
+.multi.yaml
+
+# build output
+/callboard
+/dist/
