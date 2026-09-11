@@ -40,7 +40,7 @@ func runHook(args []string) int {
 	case "claude-code stop", "codex stop":
 		return hookClaudeStop(args[0])
 	case "claude-code session-start", "codex session-start":
-		return hookClaudeSessionStart()
+		return hookClaudeSessionStart(args[0])
 	case "copilot session-start":
 		return hookCopilotSessionStart()
 	case "copilot post-tool":
@@ -123,7 +123,7 @@ func hookStartContext(ctx context.Context, c *client.Client, in hookInput) strin
 // consume messages the agent would never see.
 func hookClaudeStop(platform string) int {
 	in := readHookInput()
-	if p := nearestAgentAncestor(); p != "" && p != platform {
+	if p, _ := nearestAgentAncestor(); p != "" && p != platform {
 		hookDebug("stop: running under %s, leaving messages for its own hooks", p)
 		return ExitOK
 	}
@@ -150,7 +150,10 @@ func hookClaudeStop(platform string) int {
 
 // hookClaudeSessionStart prints plain text, which Claude Code adds to the
 // agent's context (a top-level JSON additionalContext field is ignored).
-func hookClaudeSessionStart() int {
+// Codex shares the contract but gets one extra step: this hook is the only
+// part of a Codex session that runs outside its sandbox, so it is where the
+// push notifier can be started.
+func hookClaudeSessionStart(platform string) int {
 	in := readHookInput()
 	ctx, cancel := context.WithTimeout(context.Background(), hookTimeout)
 	defer cancel()
@@ -163,6 +166,9 @@ func hookClaudeSessionStart() int {
 			fmt.Fprintln(f, "export CALLBOARD_PLATFORM_SESSION="+in.id())
 			f.Close()
 		}
+	}
+	if platform == "codex" && in.id() != "" {
+		startCodexNotifier(in.id())
 	}
 	return ExitOK
 }

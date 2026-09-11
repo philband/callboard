@@ -153,6 +153,12 @@ func (c *Client) Inbox(ctx context.Context, as string, wait time.Duration, peek 
 	return out.Messages, err
 }
 
+// MarkDelivered acknowledges messages obtained with peek once they have
+// reached the agent by another channel.
+func (c *Client) MarkDelivered(ctx context.Context, as string, ids []string) error {
+	return c.do(ctx, http.MethodPost, "/v1/delivered", nil, api.DeliveredRequest{As: as, IDs: ids}, nil)
+}
+
 func (c *Client) History(ctx context.Context, as string) ([]api.Message, error) {
 	var out api.InboxResponse
 	err := c.do(ctx, http.MethodGet, "/v1/history", url.Values{"as": {as}}, nil, &out)

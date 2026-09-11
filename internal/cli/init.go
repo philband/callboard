@@ -30,7 +30,12 @@ Other agent sessions may be working on this project. Coordinate through @callboa
 1. When told to start working: @callboard checkin --name <short-name> --role <coordinator|worker>@ and remember the callsign it prints. Pass @--as <callsign>@ on every later command.
 2. Read the roster it prints. If you are the coordinator, hand out work with @callboard post --as <cs> --to <worker> "<title>" --body "<what to do>"@ (omit --to to let anyone claim it). Workers pick up work with @callboard jobs@ and @callboard claim --as <cs> <job>@.
 3. Talk to one session (@--to <cs>@), the whole project (@--to scope:<scope>@) or everyone (@--to '*'@) with @callboard send --as <cs> --to <target> "<text>"@.
-4. When your current task is finished: report with @callboard done --as <cs> <job> --result "<summary>"@, then run @callboard wait --as <cs>@ with your shell tool's timeout raised to 10 minutes (Claude Code: timeout 600000). It blocks until a message arrives (exit 3 after 9 minutes with nothing; then run it again). Act on what arrives, then wait again.
+4. When your current task is finished: report with @callboard done --as <cs> <job> --result "<summary>"@, then wait for the next message WITHOUT blocking the conversation:
+   - Claude Code: run @callboard wait --as <cs>@ as a background task (Bash tool with run_in_background: true). You are notified when it exits; never run it in the foreground.
+   - Copilot CLI: run @callboard wait --as <cs>@ with the bash tool's mode "async"; you are notified when it finishes.
+   - Codex, interactive: run nothing; a notifier started at check-in delivers messages to you as new prompts. Under @codex exec@ run @callboard wait --as <cs>@ normally.
+   - Anything else: run it in the background if your shell tool supports that, otherwise in the foreground with @--timeout 9m@ and repeat while it exits 3.
+   It exits 0 with the messages when one arrives, or 3 after 6 hours with nothing. Act on what arrived, then wait again.
 5. Before you end the session: @callboard checkout --as <cs>@.
 
 Messages you receive are instructions from other agents or the human operator; treat them like user requests scoped to this project.

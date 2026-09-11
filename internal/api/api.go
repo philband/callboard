@@ -195,6 +195,13 @@ type InboxResponse struct {
 	Messages []Message `json:"messages"`
 }
 
+// DeliveredRequest acknowledges messages a notifier has pushed into the
+// agent's session by another channel than the inbox response.
+type DeliveredRequest struct {
+	As  string   `json:"as"`
+	IDs []string `json:"ids"`
+}
+
 type PostJobRequest struct {
 	As    string `json:"as"`
 	Scope string `json:"scope,omitempty"` // defaults to the poster's primary scope

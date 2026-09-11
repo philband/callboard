@@ -228,7 +228,7 @@ func TestWaitParam(t *testing.T) {
 	}{
 		{in: "", want: 0},
 		{in: "540s", want: 540 * time.Second},
-		{in: "1h", want: maxWait},
+		{in: "48h", want: maxWait},
 		{in: "-5s", want: 0},
 		{in: "soon", bad: true},
 	} {

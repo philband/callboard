@@ -7,18 +7,19 @@ import (
 )
 
 // maxWait is the hub's cap on a long poll.
-const maxWait = 10 * time.Minute
+const maxWait = 24 * time.Hour
 
 func init() {
 	register("wait", "block until a message arrives", runWait)
 }
 
 func runWait(args []string) int {
-	fs := newFlags("wait", "-as CS [-timeout 9m]")
+	fs := newFlags("wait", "-as CS [-timeout 6h]")
 	var c common
 	c.bind(fs, true)
-	// 9m by default: agent shell tools usually time out at 10 minutes.
-	timeout := fs.Duration("timeout", 9*time.Minute, "how long to wait (capped at 10m by the hub)")
+	// Meant to run as a background task, so wake-ups without messages are
+	// rare by default. Foreground callers pass a shorter -timeout.
+	timeout := fs.Duration("timeout", 6*time.Hour, "how long to wait (capped at 24h by the hub)")
 	if ok, code := parse(fs, args); !ok {
 		return code
 	}

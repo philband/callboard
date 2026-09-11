@@ -19,8 +19,9 @@ import (
 // as success: the other hub serves the socket.
 var ErrAlreadyRunning = errors.New("hub already running")
 
-// maxWait caps the long-poll duration a client may ask for.
-const maxWait = 10 * time.Minute
+// maxWait caps the long-poll duration a client may ask for. Waits are meant
+// to run as background tasks for hours; the cap only bounds a forgotten one.
+const maxWait = 24 * time.Hour
 
 // served describes the running listener; Handler reports it in /v1/health.
 type served struct {
@@ -125,6 +126,18 @@ func Handler(h *Hub) http.Handler {
 			ids[i] = m.ID
 		}
 		_ = h.MarkDelivered(as, ids)
+	})
+
+	mux.HandleFunc("POST /v1/delivered", func(w http.ResponseWriter, r *http.Request) {
+		var req api.DeliveredRequest
+		if !decode(w, r, &req) {
+			return
+		}
+		if err := h.MarkDelivered(req.As, req.IDs); err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("GET /v1/history", func(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +245,7 @@ func waitParam(s string) (time.Duration, error) {
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		return 0, badRequest("bad wait %q: want a Go duration such as 540s", s)
+		return 0, badRequest("bad wait %q: want a Go duration such as 6h", s)
 	}
 	if d < 0 {
 		return 0, nil

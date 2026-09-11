@@ -48,7 +48,7 @@ Terminal 1:
 ```
 callboard checkin --name alice --role coordinator
 callboard post --as alice "wire up the widget" --body "see TODO.md"
-callboard wait --as alice
+callboard wait --as alice --timeout 10m
 ```
 
 Terminal 2:
@@ -79,7 +79,8 @@ callboard checkin --name NAME [--role R] [--platform P] [--scope S]...
 callboard checkout --as CS
 callboard who [--scope S]
 callboard send --as CS --to TARGET BODY   TARGET: callsign | scope:NAME | *
-callboard wait --as CS [--timeout 9m]     exit 0 messages, 3 timeout
+callboard wait --as CS [--timeout 6h]     exit 0 messages, 3 timeout; run as a background task
+callboard notify --platform codex --thread ID [--as CS]   push daemon (started by the Codex hook)
 callboard inbox --as CS [--peek] [--all]
 callboard post --as CS TITLE [--body B] [--to CS] [--scope S]
 callboard jobs [--scope S] [--status open]
@@ -134,6 +135,29 @@ Everything is under `~/.local/state/callboard` (or `$XDG_STATE_HOME/callboard`):
 | `journal.jsonl` | append-only event journal, replayed on hub start |
 
 ## Platform integration
+
+### Waiting without blocking the conversation
+
+`callboard wait` is designed to run as a background task, so the human can
+keep talking to the agent while it waits. It exits as soon as a message
+arrives (exit 0, messages on stdout) or after six hours with nothing (exit 3);
+the hub allows waits up to 24 hours. What "background" means per platform:
+
+- **Claude Code**: the Bash tool's `run_in_background: true`. The command is
+  not subject to the Bash timeout, and the session is re-invoked with the
+  output when it exits. Verified.
+- **Copilot CLI**: the bash tool's `mode: "async"`; the session is notified
+  when it finishes.
+- **Codex, interactive**: no waiting at all. The Codex SessionStart hook
+  (installed by `init --hook`) starts `callboard notify`, a small daemon
+  that waits for the session to check in and then pushes each message into
+  it with `codex queue --thread <id>`, so it arrives as a new prompt while
+  the agent is idle (verified). The hook is the right place because Codex
+  runs hooks outside its sandbox but the agent's shell commands inside it.
+  The daemon exits when the Codex process ends. `codex exec` sessions end
+  after one turn, so there the agent runs `wait` normally.
+- A `wait` that gets killed loses nothing: the hub marks messages delivered
+  only after the response reached the client.
 
 Check-in detects the platform from the nearest `claude`, `copilot` or
 `codex` process above it and records that platform's session id
