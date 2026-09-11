@@ -1,7 +1,11 @@
 // Package api holds the wire types shared by hub and client.
 package api
 
-import "time"
+import (
+	"time"
+
+	"github.com/philband/callboard/internal/build"
+)
 
 // Session statuses derived from last-seen.
 const (
@@ -229,11 +233,23 @@ type EventsResponse struct {
 }
 
 type HealthResponse struct {
-	OK      bool   `json:"ok"`
-	Version string `json:"version"`
-	PID     int    `json:"pid"`
-	Socket  string `json:"socket,omitempty"`
+	OK      bool       `json:"ok"`
+	Version string     `json:"version"`
+	PID     int        `json:"pid"`
+	Socket  string     `json:"socket,omitempty"`
+	Build   build.Info `json:"build"`
 }
+
+// ShutdownRequest asks the hub to stop gracefully. A non-zero IfModTime must
+// match the hub's own build, so a restart meant for a stale hub cannot take
+// down the newer one that replaced it in the meantime.
+type ShutdownRequest struct {
+	IfModTime time.Time `json:"if_mod_time,omitzero"`
+}
+
+// MsgHubRestarting is the error a long poll gets while the hub drains for a
+// restart. Clients reconnect on it instead of failing.
+const MsgHubRestarting = "hub restarting"
 
 type ErrorResponse struct {
 	Error string `json:"error"`

@@ -89,6 +89,7 @@ string such as `6h`, capped at 24h by the hub.
 | POST | `/v1/messages` | `SendRequest` → `SendResponse` |
 | GET | `/v1/inbox?as=&wait=&peek=1` | → `InboxResponse`; long-poll; marks delivered unless `peek` |
 | POST | `/v1/delivered` | `DeliveredRequest` → 204; acknowledge peeked messages pushed by a notifier |
+| POST | `/v1/shutdown` | `ShutdownRequest` (if_mod_time) → 202; graceful restart, 409 if the hub's build differs |
 | GET | `/v1/history?as=` | → `InboxResponse`; everything sent or received |
 | POST | `/v1/jobs` | `PostJobRequest` → `JobResponse` |
 | GET | `/v1/jobs?scope=&status=` | → `JobsResponse` |
@@ -122,6 +123,7 @@ callboard fail --as CS JOB [--reason R]
 callboard tail [--scope S] [--since N] [--follow]
 callboard say --to TARGET BODY            send as `human`
 callboard dash                            dashboard
+callboard restart                        graceful hub restart (automatic after a rebuild)
 callboard init [--hook]                   write agent instructions (+ Claude Code, Codex, Copilot hooks)
 callboard hook PLATFORM EVENT             entry points used by those hooks
 callboard version
@@ -182,12 +184,31 @@ The matching session id env var (`CLAUDE_CODE_SESSION_ID`,
 `COPILOT_AGENT_SESSION_ID`, `CODEX_SESSION_ID`) is recorded for hook
 resolution.
 
+## Upgrading the binary
+
+Build identity is the executable's modification time and size (`internal/build`),
+reported by `/v1/health`. `client.Connect` restarts the hub when the client
+is strictly newer: `POST /v1/shutdown` carrying the hub's build time (a
+newer hub answers 409), wait for the socket to vanish, spawn, wait for
+health. On shutdown the hub makes every long-poll return 503 "hub
+restarting" before the HTTP server drains, so `wait`, `notify`, `tail
+--follow` and the dashboard reconnect and continue with their remaining
+budget; `notify` additionally re-executes itself when the hub is newer.
+An older client never triggers a restart. The journal makes the swap
+stateless for sessions, jobs and pending messages.
+
 ## Agent protocol
+
+Roles: the human assigns the coordinator; everyone else is a worker. The
+coordinator only posts jobs, answers, reviews and decides on shipping; it
+never implements. Workers may hold several jobs (then they own their
+ordering and conflicts), delegate to subagents with models matched to the
+job, and always get the coordinator's go-ahead before shipping.
 
 1. On start, or when the human says to begin: `callboard checkin --name <role-ish name> --role <coordinator|worker>`. Remember the callsign.
 2. Read the roster in the check-in output; introduce yourself with `send --to scope:<scope>` if useful.
 3. Do your work. To hand out work: `post`. To pick up work: `jobs`, `claim`.
-4. When your current task is finished: `wait`. React to what arrives; loop.
+4. When your current task is finished and reported: `wait` as a background task (or, on Codex, nothing: the notifier pushes). React to what arrives; loop.
 5. Before ending: `checkout`.
 
 ## Later

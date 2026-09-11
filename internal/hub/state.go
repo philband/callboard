@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/philband/callboard/internal/api"
+	"github.com/philband/callboard/internal/build"
 )
 
 // Error carries an HTTP status for the API layer.
@@ -27,6 +28,10 @@ func (e *Error) Error() string { return e.Msg }
 func badRequest(format string, a ...any) error { return &Error{400, fmt.Sprintf(format, a...)} }
 func notFound(format string, a ...any) error   { return &Error{404, fmt.Sprintf(format, a...)} }
 func conflict(format string, a ...any) error   { return &Error{409, fmt.Sprintf(format, a...)} }
+
+// restarting is what a long poll returns once the hub starts shutting down.
+// Clients recognise it and reconnect instead of reporting a failure.
+func restarting() error { return &Error{503, api.MsgHubRestarting} }
 
 // Options configure a Hub.
 type Options struct {
@@ -52,8 +57,11 @@ type Hub struct {
 	events   []api.Event
 	journal  *journal
 	changed  chan struct{} // closed and replaced on every commit
+	closing  chan struct{} // closed once a graceful shutdown starts
+	stopOnce sync.Once
 	now      func() time.Time
 	version  string
+	build    build.Info
 }
 
 // New creates a hub and replays the journal if one is configured.
@@ -63,8 +71,13 @@ func New(opts Options) (*Hub, error) {
 		inbox:    map[string][]api.Message{},
 		jobs:     map[string]*api.Job{},
 		changed:  make(chan struct{}),
+		closing:  make(chan struct{}),
 		now:      opts.Now,
 		version:  opts.Version,
+		build:    build.This(),
+	}
+	if opts.Version != "" {
+		h.build.Version = opts.Version
 	}
 	if h.now == nil {
 		h.now = time.Now
@@ -86,6 +99,18 @@ func New(opts Options) (*Hub, error) {
 	}
 	return h, nil
 }
+
+// Build reports the executable this hub is running, read once at start. The
+// file on disk may be replaced while the hub runs; this stays what we are.
+func (h *Hub) Build() build.Info { return h.build }
+
+// Closing is closed once BeginShutdown has been called. Long polls select on
+// it so a restart drains in milliseconds instead of holding clients for hours.
+func (h *Hub) Closing() <-chan struct{} { return h.closing }
+
+// BeginShutdown starts a graceful shutdown: in-flight long polls end with
+// restarting() and Serve stops the listener. Calling it twice is harmless.
+func (h *Hub) BeginShutdown() { h.stopOnce.Do(func() { close(h.closing) }) }
 
 // Close flushes and closes the journal.
 func (h *Hub) Close() error {
@@ -451,6 +476,8 @@ func (h *Hub) Inbox(ctx context.Context, as string, wait time.Duration, peek boo
 		h.mu.Unlock()
 		select {
 		case <-ch:
+		case <-h.closing:
+			return nil, restarting()
 		case <-ctx.Done():
 			return []api.Message{}, nil
 		case <-deadline.C:
@@ -713,6 +740,8 @@ func (h *Hub) Events(ctx context.Context, since uint64, wait time.Duration, scop
 		}
 		select {
 		case <-ch:
+		case <-h.closing:
+			return api.EventsResponse{}, restarting()
 		case <-ctx.Done():
 			return api.EventsResponse{Events: []api.Event{}, Next: next}, nil
 		case <-deadline.C:

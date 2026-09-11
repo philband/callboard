@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/philband/callboard/internal/api"
+	"github.com/philband/callboard/internal/build"
 	"github.com/philband/callboard/internal/client"
 	"github.com/philband/callboard/internal/config"
 )
@@ -29,6 +30,9 @@ var (
 	// notifyRetryMin and notifyRetryMax bound the backoff on hub errors.
 	notifyRetryMin = 5 * time.Second
 	notifyRetryMax = 60 * time.Second
+	// notifyRestartMin is where the backoff starts when the hub went away
+	// for a restart rather than for good: a rebuild is back in a moment.
+	notifyRestartMin = 300 * time.Millisecond
 	// notifyGiveUp is how long the hub may stay unreachable before the
 	// daemon exits non-zero.
 	notifyGiveUp = 10 * time.Minute
@@ -204,6 +208,7 @@ func runNotifyLoop(ctx context.Context, c *client.Client, as, platform, thread s
 		if ctx.Err() != nil {
 			return nil
 		}
+		notifyReexec(ctx, c)
 		msgs, err := c.Inbox(ctx, as, notifyPeekWait, true)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -215,6 +220,9 @@ func runNotifyLoop(ctx context.Context, c *client.Client, as, platform, thread s
 			}
 			if downSince.IsZero() {
 				downSince = time.Now()
+				if client.IsRestarting(err) {
+					backoff = notifyRestartMin
+				}
 			}
 			if time.Since(downSince) > notifyGiveUp {
 				return fmt.Errorf("hub unreachable for %s: %w", shortDur(notifyGiveUp), err)
@@ -251,6 +259,32 @@ func runNotifyLoop(ctx context.Context, c *client.Client, as, platform, thread s
 		if err := c.MarkDelivered(ctx, as, ids); err != nil && ctx.Err() == nil {
 			notifyLog("marking delivered: %v", err)
 		}
+	}
+}
+
+// notifyReexec replaces this daemon with the binary the hub is running when
+// that one is newer. The daemon outlives many rebuilds, and nobody restarts
+// it by hand. The lock file descriptor is close-on-exec, so the new image
+// re-takes the flock; the deferred removal of the lock file does not run,
+// which is what we want since the lock is still wanted.
+func notifyReexec(ctx context.Context, c *client.Client) {
+	h, err := c.Health(ctx)
+	if err != nil || !h.Build.NewerThan(build.This()) {
+		return
+	}
+	// Only exec what is genuinely newer on disk. A hub started from some
+	// other binary would otherwise have us exec ourselves forever.
+	if !build.OnDisk().NewerThan(build.This()) {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		notifyLog("re-exec: %v", err)
+		return
+	}
+	notifyLog("re-executing newer build")
+	if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
+		notifyLog("re-exec: %v; carrying on with the running build", err)
 	}
 }
 

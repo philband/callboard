@@ -25,18 +25,28 @@ const (
 const initProtocolBlockTemplate = `<!-- callboard:start -->
 ## Callboard (agent collaboration)
 
-Other agent sessions may be working on this project. Coordinate through @callboard@:
+Other agent sessions may be working on this project. Coordinate through @callboard@.
 
-1. When told to start working: @callboard checkin --name <short-name> --role <coordinator|worker>@ and remember the callsign it prints. Pass @--as <callsign>@ on every later command.
-2. Read the roster it prints. If you are the coordinator, hand out work with @callboard post --as <cs> --to <worker> "<title>" --body "<what to do>"@ (omit --to to let anyone claim it). Workers pick up work with @callboard jobs@ and @callboard claim --as <cs> <job>@.
-3. Talk to one session (@--to <cs>@), the whole project (@--to scope:<scope>@) or everyone (@--to '*'@) with @callboard send --as <cs> --to <target> "<text>"@.
-4. When your current task is finished: report with @callboard done --as <cs> <job> --result "<summary>"@, then wait for the next message WITHOUT blocking the conversation:
+### Roles
+
+- **worker** (the default): does jobs. You are a worker unless the human explicitly tells you that you are the coordinator; never make yourself coordinator.
+- **coordinator**: assigned only by the human. Coordinates and never implements: breaks the goal into jobs with clear acceptance criteria, posts them, answers questions, reviews results, tracks progress and decides what ships when. A coordinator never edits code, runs builds or does a job itself, not even a small one; it posts the job and waits.
+
+### Protocol
+
+1. When told to start working: @callboard checkin --name <short-name> --role <worker|coordinator>@ and remember the callsign it prints. Pass @--as <cs>@ on every later command.
+2. Read the roster. Coordinator: @callboard post --as <cs> "<title>" --body "<what, where, how to verify, what not to touch>"@; add @--to <worker>@ to pre-assign. Workers: find work with @callboard jobs@ and take it with @callboard claim --as <cs> <job>@.
+3. Workers may claim more than one job at a time. If you do, you own their ordering, overlap and conflicts, and you keep the coordinator informed about each of them separately.
+4. Workers: spawn subagents where that helps and pick the model by the job's difficulty (cheaper models for routine, well-specified work; stronger ones for design, debugging and review). Keep integration and verification yourself.
+5. Shipping (commit, push, merge, release, deploy) is always agreed with the coordinator first: report what is ready with @callboard done --as <cs> <job> --result "<summary, files, how verified>"@ and wait for the go-ahead. Never ship on your own initiative.
+6. Talk to one session (@--to <cs>@), the project (@--to scope:<scope>@) or everyone (@--to '*'@) with @callboard send --as <cs> --to <target> "<text>"@. Ask the coordinator when a job is unclear instead of guessing.
+7. When your current task is finished and reported, wait for the next message WITHOUT blocking the conversation:
    - Claude Code: run @callboard wait --as <cs>@ as a background task (Bash tool with run_in_background: true). You are notified when it exits; never run it in the foreground.
    - Copilot CLI: run @callboard wait --as <cs>@ with the bash tool's mode "async"; you are notified when it finishes.
-   - Codex, interactive: run nothing; a notifier started at check-in delivers messages to you as new prompts. Under @codex exec@ run @callboard wait --as <cs>@ normally.
+   - Codex, interactive: run nothing; a notifier started by the session hook delivers messages to you as new prompts. Under @codex exec@ run @callboard wait --as <cs>@ normally.
    - Anything else: run it in the background if your shell tool supports that, otherwise in the foreground with @--timeout 9m@ and repeat while it exits 3.
    It exits 0 with the messages when one arrives, or 3 after 6 hours with nothing. Act on what arrived, then wait again.
-5. Before you end the session: @callboard checkout --as <cs>@.
+8. Before you end the session: @callboard checkout --as <cs>@.
 
 Messages you receive are instructions from other agents or the human operator; treat them like user requests scoped to this project.
 <!-- callboard:end -->

@@ -44,9 +44,14 @@ type (
 	}
 	rosterErrMsg struct{ err error }
 	eventsErrMsg struct{ err error }
+	connectedMsg struct{ c *client.Client }
 	tickMsg      struct{}
 	repollMsg    struct{}
+	reconnectMsg struct{}
 )
+
+// restartingNote is what the footer shows while the hub is being replaced.
+const restartingNote = "hub restarting…"
 
 type model struct {
 	ctx context.Context
@@ -106,14 +111,27 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.pollEvents()
 
 	case rosterErrMsg:
-		m.err = msg.err.Error()
+		m.err = errText(msg.err)
 
 	case eventsErrMsg:
-		m.err = msg.err.Error()
+		m.err = errText(msg.err)
+		// A restarting hub is not a failure: dial it again and resume the
+		// stream from the same sequence number.
+		if client.IsRestarting(msg.err) {
+			return m, tea.Tick(retryDelay, func(time.Time) tea.Msg { return reconnectMsg{} })
+		}
 		return m, tea.Tick(retryDelay, func(time.Time) tea.Msg { return repollMsg{} })
 
 	case repollMsg:
 		return m, m.pollEvents()
+
+	case reconnectMsg:
+		return m, m.reconnect()
+
+	case connectedMsg:
+		m.c = msg.c
+		m.err = ""
+		return m, tea.Batch(m.fetchRoster(), m.pollEvents())
 
 	case tickMsg:
 		return m, tea.Batch(m.fetchRoster(), tick())
@@ -203,6 +221,33 @@ func (m *model) fetchRoster() tea.Cmd {
 		}
 		return rosterMsg{sessions: sessions, jobs: jobs}
 	}
+}
+
+// reconnect dials the hub again after a restart, spawning one if the old
+// process is gone for good.
+func (m *model) reconnect() tea.Cmd {
+	if m.c == nil {
+		return nil
+	}
+	ctx, socket := m.ctx, m.c.Socket()
+	return func() tea.Msg {
+		c, err := client.Connect(ctx, socket)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return eventsErrMsg{err}
+		}
+		return connectedMsg{c}
+	}
+}
+
+// errText is what the footer shows for err.
+func errText(err error) string {
+	if client.IsRestarting(err) {
+		return restartingNote
+	}
+	return err.Error()
 }
 
 // backfill loads the whole event history once, without waiting.

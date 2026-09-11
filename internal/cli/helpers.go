@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,22 @@ import (
 
 // exitSignal is the conventional shell exit code for death by SIGINT.
 const exitSignal = 130
+
+// reconnectPause is how long a long-running command waits before dialling
+// the hub again after it went away for a restart.
+const reconnectPause = 300 * time.Millisecond
+
+// sleepCtx waits d and reports whether it got there before the context ended.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
 
 // usageErr reports a bad invocation: a message, the command usage, ExitUsage.
 func usageErr(fs *flag.FlagSet, format string, a ...any) int {

@@ -15,12 +15,17 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/philband/callboard/internal/build"
 	"github.com/philband/callboard/internal/client"
 	"github.com/philband/callboard/internal/config"
 )
 
 // Version is set by the linker at release time.
 var Version = "dev"
+
+// The build package identifies the executable for every other package, so
+// give it the version the linker set here.
+func init() { build.Version = Version }
 
 // Exit codes shared by commands.
 const (
@@ -145,8 +150,14 @@ func (c *common) callsign() (string, error) {
 	return "", errors.New("missing --as (or set CALLBOARD_AS); it is the callsign you got from checkin")
 }
 
-// connect returns a hub client, auto-spawning the hub when none is running.
+// connect returns a hub client, auto-spawning the hub when none is running
+// and restarting one that is older than this executable, so a rebuild takes
+// effect for everyone without a manual restart.
 func connect(ctx context.Context) (*client.Client, error) {
+	client.OnHubRestart = func(old, new build.Info) {
+		fmt.Fprintf(os.Stderr, "callboard: hub restarted to the newer build (%s → %s)\n",
+			buildTime(old), buildTime(new))
+	}
 	return client.Connect(ctx, config.SocketPath())
 }
 

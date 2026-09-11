@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -36,14 +37,33 @@ func Handler(h *Hub) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
-		res := api.HealthResponse{OK: true, Version: h.version, PID: os.Getpid()}
+		res := api.HealthResponse{OK: true, Version: h.version, PID: os.Getpid(), Build: h.build}
 		if s := serving.Load(); s != nil {
 			res.Socket = s.socket
 			if s.version != "" {
 				res.Version = s.version
+				res.Build.Version = s.version
 			}
 		}
 		writeJSON(w, http.StatusOK, res)
+	})
+
+	// Graceful restart: a client that carries a newer build than the hub asks
+	// it to step aside and spawns a replacement. Long polls end with
+	// api.MsgHubRestarting, so nothing in flight is lost.
+	mux.HandleFunc("POST /v1/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		var req api.ShutdownRequest
+		if !decode(w, r, &req) {
+			return
+		}
+		if !req.IfModTime.IsZero() && !req.IfModTime.Equal(h.build.ModTime) {
+			writeErr(w, conflict("hub build changed, not shutting down"))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_ = http.NewResponseController(w).Flush()
+		fmt.Fprintf(os.Stderr, "shutdown requested (build %s)\n", h.build.ModTime.Format(time.RFC3339))
+		h.BeginShutdown()
 	})
 
 	mux.HandleFunc("POST /v1/checkin", func(w http.ResponseWriter, r *http.Request) {
@@ -341,6 +361,7 @@ func Serve(ctx context.Context, h *Hub, socket, lock, version string) error {
 		}
 		return err
 	case <-ctx.Done():
+	case <-h.Closing():
 	}
 	stop, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

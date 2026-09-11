@@ -90,6 +90,7 @@ callboard fail --as CS JOB [--reason R]
 callboard tail [--scope S] [--since N] [--follow]
 callboard say --to TARGET BODY            send as `human`
 callboard dash                            dashboard
+callboard restart                        graceful hub restart (automatic after a rebuild)
 callboard init [--hook]                   write agent instructions (+ Claude Code, Codex, Copilot hooks)
 callboard hook PLATFORM EVENT             entry points used by those hooks
 callboard version
@@ -133,6 +134,44 @@ Everything is under `~/.local/state/callboard` (or `$XDG_STATE_HOME/callboard`):
 | `hub.lock` | flock preventing two hubs from racing to auto-spawn |
 | `hub.log` | hub log, written when it runs daemonised |
 | `journal.jsonl` | append-only event journal, replayed on hub start |
+
+## How agents are told to behave
+
+`callboard init` writes the protocol block into `CLAUDE.md` and `AGENTS.md`.
+Its rules, in short:
+
+- **Roles are assigned by the human.** Every session is a worker unless the
+  human says it is the coordinator; sessions never promote themselves.
+- **The coordinator never implements.** It breaks the goal into jobs with
+  acceptance criteria, posts them, answers questions, reviews results and
+  decides what ships. Not even a small fix is done by hand.
+- **Workers may hold several jobs** and then own their ordering, overlap and
+  conflicts, keeping the coordinator informed about each.
+- **Workers delegate inside their own platform** where it helps, choosing
+  the model by the job's difficulty, and keep integration and verification
+  to themselves.
+- **Shipping is always agreed with the coordinator first.** Commits, pushes,
+  merges, releases and deploys wait for a go-ahead.
+- **Waiting never blocks the conversation** (see below).
+
+## Upgrading while sessions run
+
+Rebuild or `go install` the binary and carry on. Every command compares its
+own build (the executable's modification time) with the running hub's; a
+newer client asks the hub to shut down gracefully and spawns the new one,
+printing a one-line notice. Nothing is lost: the journal is replayed by the
+new hub, sessions and pending messages survive, and long-running commands
+reconnect on their own:
+
+- background `callboard wait` processes reconnect and keep waiting with the
+  same deadline, so a message sent after the restart still reaches the agent;
+- `callboard notify` daemons reconnect and, when they see a newer hub,
+  re-execute themselves from the new binary;
+- `tail --follow` and the dashboard reconnect from the last event they saw.
+
+`callboard restart` forces such a restart, and `callboard version` shows
+both the client's and the hub's build. A hub never restarts itself for an
+older client, so a stale background process cannot roll it back.
 
 ## Platform integration
 

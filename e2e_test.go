@@ -278,3 +278,55 @@ func TestAutoSpawn(t *testing.T) {
 		t.Errorf("hub.log missing: %v", err)
 	}
 }
+
+// TestWaitSurvivesHubRestart is the whole point of the graceful restart: a
+// background `wait` started before the hub is replaced still returns the
+// message that was sent after it, without an error and with exit 0.
+func TestWaitSurvivesHubRestart(t *testing.T) {
+	e := newEnv(t)
+	e.startHub()
+	repo, _ := os.Getwd()
+	e.ok("checkin", "-name", "waiter", "-platform", "test", "-cwd", repo)
+
+	type result struct {
+		out  string
+		code int
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, _, code := e.run("wait", "-as", "waiter", "-timeout", "60s")
+		done <- result{out, code}
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	out := e.ok("restart")
+	want(t, out, "stopped:", "running:", "pid ")
+	// The hub we started in the foreground stepped aside; its replacement is
+	// detached, so take it down by pid at the end instead.
+	_ = e.hub.Wait()
+	e.hub = nil
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if h, err := client.New(e.socket).Health(ctx); err == nil {
+			p, _ := os.FindProcess(h.PID)
+			_ = p.Signal(syscall.SIGTERM)
+		}
+		e.waitGone()
+	}()
+
+	// The restart also makes the new hub visible to `version`.
+	out = e.ok("version")
+	want(t, out, "callboard ", "hub: ", "pid ")
+
+	e.ok("say", "-to", "waiter", "after the restart")
+	select {
+	case r := <-done:
+		if r.code != 0 {
+			t.Fatalf("wait exited %d, want 0:\n%s", r.code, r.out)
+		}
+		want(t, r.out, "from human to waiter", "after the restart")
+	case <-time.After(20 * time.Second):
+		t.Fatal("wait did not return the message sent after the hub restart")
+	}
+}

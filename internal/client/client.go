@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/philband/callboard/internal/api"
@@ -30,6 +31,22 @@ func (e *APIError) Error() string { return e.Msg }
 func IsNotFound(err error) bool {
 	var e *APIError
 	return errors.As(err, &e) && e.Code == http.StatusNotFound
+}
+
+// IsRestarting reports whether err means the hub is not there right now:
+// the 503 a long poll gets while the hub drains for a restart, or any
+// transport failure (socket gone, connection refused, reset, EOF). Both are
+// worth reconnecting on rather than reporting to the user. Context errors
+// are the caller's own doing and never count.
+func IsRestarting(err error) bool {
+	if err == nil {
+		return false
+	}
+	var e *APIError
+	if errors.As(err, &e) {
+		return e.Code == http.StatusServiceUnavailable && strings.Contains(e.Msg, api.MsgHubRestarting)
+	}
+	return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
 }
 
 // Client is a hub connection. It is safe for concurrent use.
@@ -104,6 +121,12 @@ func (c *Client) Health(ctx context.Context) (api.HealthResponse, error) {
 	var out api.HealthResponse
 	err := c.do(ctx, http.MethodGet, "/v1/health", nil, nil, &out)
 	return out, err
+}
+
+// Shutdown asks the hub to stop gracefully. A non-zero ifModTime must match
+// the hub's own build or it refuses with 409.
+func (c *Client) Shutdown(ctx context.Context, ifModTime time.Time) error {
+	return c.do(ctx, http.MethodPost, "/v1/shutdown", nil, api.ShutdownRequest{IfModTime: ifModTime}, nil)
 }
 
 func (c *Client) Checkin(ctx context.Context, req api.CheckinRequest) (api.CheckinResponse, error) {

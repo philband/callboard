@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/philband/callboard/internal/api"
+	"github.com/philband/callboard/internal/client"
 )
 
 // followWait is the long-poll window used by -follow.
@@ -46,7 +47,21 @@ func runTail(args []string) int {
 			if ctx.Err() != nil {
 				return ExitOK
 			}
-			return fail(err)
+			// A follower outlives hub restarts: reconnect and resume from
+			// the same sequence number.
+			if !*follow || !client.IsRestarting(err) {
+				return fail(err)
+			}
+			if !sleepCtx(ctx, reconnectPause) {
+				return ExitOK
+			}
+			if cl, err = connect(ctx); err != nil {
+				if ctx.Err() != nil {
+					return ExitOK
+				}
+				return fail(err)
+			}
+			continue
 		}
 		for _, ev := range resp.Events {
 			if c.json {
