@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	register("init", "write agent instructions into CLAUDE.md/AGENTS.md (+ Claude Code hooks)", runInit)
+	register("init", "write agent instructions into CLAUDE.md/AGENTS.md (+ Claude Code, Codex and Copilot hooks)", runInit)
 }
 
 // initBlockStart and initBlockEnd delimit the callboard block inside a target
@@ -72,9 +72,9 @@ func runInit(args []string) int {
 	var hook, jsonOut bool
 	var files initFileFlag
 	fs.StringVar(&dir, "dir", ".", "project directory")
-	fs.BoolVar(&hook, "hook", false, "also install Claude Code hooks")
+	fs.BoolVar(&hook, "hook", false, "also install hooks for Claude Code (.claude/settings.json), Codex (.codex/hooks.json) and Copilot CLI (.github/hooks/callboard.json)")
 	fs.BoolVar(&jsonOut, "json", false, "print JSON instead of text")
-	fs.Var(&files, "file", "target file, relative to -dir (repeatable; default: whichever of CLAUDE.md and AGENTS.md exist, else CLAUDE.md)")
+	fs.Var(&files, "file", "target file, relative to -dir (repeatable; default CLAUDE.md and AGENTS.md)")
 	if ok, code := parse(fs, args); !ok {
 		return code
 	}
@@ -94,8 +94,21 @@ func runInit(args []string) int {
 	}
 
 	if hook {
-		rel := filepath.Join(".claude", "settings.json")
-		status, err := initInstallHooks(filepath.Join(dir, rel))
+		for _, h := range []struct {
+			rel      string
+			platform string
+		}{
+			{filepath.Join(".claude", "settings.json"), "claude-code"},
+			{filepath.Join(".codex", "hooks.json"), "codex"},
+		} {
+			status, err := initInstallHooks(filepath.Join(dir, h.rel), h.platform)
+			if err != nil {
+				return fail(err)
+			}
+			results = append(results, initResult{File: h.rel, Status: status, hook: true})
+		}
+		rel := filepath.Join(".github", "hooks", "callboard.json")
+		status, err := initInstallCopilotHooks(filepath.Join(dir, rel))
 		if err != nil {
 			return fail(err)
 		}
@@ -114,19 +127,10 @@ func runInit(args []string) int {
 	return ExitOK
 }
 
-// initDefaultFiles targets whichever of CLAUDE.md and AGENTS.md exist, or
-// CLAUDE.md alone when neither does.
+// initDefaultFiles targets both instruction files: Claude Code reads
+// CLAUDE.md; Copilot CLI, Codex and Cursor read AGENTS.md.
 func initDefaultFiles(dir string) []string {
-	var files []string
-	for _, f := range []string{"CLAUDE.md", "AGENTS.md"} {
-		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
-			files = append(files, f)
-		}
-	}
-	if len(files) == 0 {
-		return []string{"CLAUDE.md"}
-	}
-	return files
+	return []string{"CLAUDE.md", "AGENTS.md"}
 }
 
 // initUpsertFile inserts or replaces the callboard block in path, creating
@@ -210,7 +214,7 @@ type initHookGroup struct {
 // initInstallHooks merges the callboard SessionStart and Stop hooks into the
 // settings.json at path, creating it if missing and preserving everything
 // else already in the file. It reports "created", "updated" or "unchanged".
-func initInstallHooks(path string) (string, error) {
+func initInstallHooks(path, platform string) (string, error) {
 	data, err := os.ReadFile(path)
 	existed := true
 	if errors.Is(err, os.ErrNotExist) {
@@ -239,8 +243,8 @@ func initInstallHooks(path string) (string, error) {
 	}
 
 	wantedCommand := map[string]string{
-		"SessionStart": "callboard hook session-start",
-		"Stop":         "callboard hook stop",
+		"SessionStart": "callboard hook " + platform + " session-start",
+		"Stop":         "callboard hook " + platform + " stop",
 	}
 	wantedTimeout := map[string]int{
 		"SessionStart": 10,
@@ -297,4 +301,42 @@ func initHookCommandPresent(groups []initHookGroup, cmd string) bool {
 		}
 	}
 	return false
+}
+
+// copilotHooksFile is the whole of .github/hooks/callboard.json. Copilot CLI
+// reads every *.json in that directory, so the file is callboard's own and
+// is simply rewritten when it drifts.
+const copilotHooksFile = `{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {"type": "command", "bash": "callboard hook copilot session-start", "timeoutSec": 10}
+    ],
+    "postToolUse": [
+      {"type": "command", "bash": "callboard hook copilot post-tool", "timeoutSec": 10}
+    ]
+  }
+}
+`
+
+// initInstallCopilotHooks writes copilotHooksFile and reports "created",
+// "updated" or "unchanged".
+func initInstallCopilotHooks(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil && string(data) == copilotHooksFile:
+		return "unchanged", nil
+	case err != nil && !errors.Is(err, os.ErrNotExist):
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(copilotHooksFile), 0o644); err != nil {
+		return "", err
+	}
+	if err == nil {
+		return "updated", nil
+	}
+	return "created", nil
 }

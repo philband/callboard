@@ -24,7 +24,7 @@ in on arrival and where calls and notices are posted.
 | Transport | HTTP+JSON over a Unix socket. Same API later over TCP+TLS with bearer tokens. |
 | Host aliases | `~/.config/callboard/config.json`, `host_aliases` map. |
 | Human CLI | `who`, `tail`, `say`, plus a Bubble Tea v2 dashboard (`dash`). |
-| Agent hook | `callboard init` writes a protocol section into CLAUDE.md / AGENTS.md and can install a Claude Code Stop hook that blocks stopping while messages are pending. |
+| Agent hook | `callboard init` writes a protocol section into CLAUDE.md and AGENTS.md and can install hooks: Claude Code and Codex Stop (blocks stopping while messages are pending) and SessionStart; Copilot CLI sessionStart and postToolUse (nudges after each tool call, since Copilot cannot block a turn). |
 | Remote | Designed for, not shipped: listener abstraction, auth middleware that is a no-op on the socket. |
 | Verification | Unit tests, an in-process end-to-end test with two fake sessions, then a manual run with two real sessions. |
 | License | MIT, Philipp Bandow. |
@@ -119,8 +119,8 @@ callboard fail --as CS JOB [--reason R]
 callboard tail [--scope S] [--since N] [--follow]
 callboard say --to TARGET BODY            send as `human`
 callboard dash                            dashboard
-callboard init [--hook]                   write agent instructions (+ Claude Code hooks)
-callboard hook stop|session-start         entry points used by those hooks
+callboard init [--hook]                   write agent instructions (+ Claude Code, Codex, Copilot hooks)
+callboard hook PLATFORM EVENT             entry points used by those hooks
 callboard version
 ```
 
@@ -129,12 +129,38 @@ by an agent or a person. `CALLBOARD_AS` substitutes for `--as`. Flags and
 positionals may be interleaved (the shared parser restarts after each
 positional); a bare `--` ends flag parsing.
 
-Hooks (`callboard hook stop|session-start`) read Claude Code's hook JSON from
-stdin, resolve their callsign through `/v1/resolve` using the platform
-session id recorded at check-in, and never spawn the hub or exit non-zero on
-errors. The Stop hook delivers pending messages on stderr with exit code 2,
-which blocks the stop and hands the text to the agent. SessionStart prints
-plain text, which Claude Code adds to the agent's context.
+Hooks (`callboard hook claude-code|codex stop|session-start`, `callboard hook
+copilot session-start|post-tool`) read the platform's hook JSON from stdin
+(`session_id` or `sessionId`, `cwd`), resolve their callsign through
+`/v1/resolve` using the platform session id recorded at check-in
+(`CLAUDE_CODE_SESSION_ID`, `COPILOT_AGENT_SESSION_ID`), and never spawn the
+hub or exit non-zero on errors. Claude Code: Stop delivers pending messages
+on stderr with exit code 2, which blocks the stop and hands the text to the
+agent; SessionStart prints plain text, which is added to the context.
+Copilot CLI: both hooks print single-line JSON with `additionalContext`;
+postToolUse only peeks and tells the agent to run `inbox` when messages are
+waiting. Copilot runs repository hooks from `.github/hooks/` in interactive
+sessions (after the directory is trusted) and, in `-p` mode, only with
+`GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=true`; user-level hooks in
+`~/.copilot/hooks/` always run.
+
+Codex uses Claude Code's hook contract (stdin fields, plain-stdout context,
+exit 2 on Stop resumes the turn) from `.codex/hooks.json`, gated by hook
+trust (`/hooks` or `--dangerously-bypass-hook-trust`). Its sandbox blocks
+Unix sockets unless network access is enabled
+(`sandbox_workspace_write.network_access=true`), and forbids `ps`. Each
+platform runs the other platforms' Claude-format hooks too (Copilot reads
+`.claude/settings.json`; Codex does as well), so the Stop handler checks the
+process ancestry and consumes messages only under the platform it was
+installed for.
+
+Platform detection at check-in walks the process ancestry (`ps -o ppid=,comm=`)
+and takes the nearest `claude`, `copilot` or `codex` executable, because a
+session started from inside another agent's shell inherits both
+environments; where `ps` is unavailable, `CODEX_SANDBOX` identifies Codex.
+The matching session id env var (`CLAUDE_CODE_SESSION_ID`,
+`COPILOT_AGENT_SESSION_ID`, `CODEX_SESSION_ID`) is recorded for hook
+resolution.
 
 ## Agent protocol
 

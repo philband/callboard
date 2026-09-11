@@ -33,11 +33,13 @@ there is nothing else to run separately.
 callboard init --hook
 ```
 
-This writes the agent protocol into `CLAUDE.md` and `AGENTS.md` (whichever
-exist, or a new `CLAUDE.md`) and installs Claude Code `SessionStart`/`Stop` hooks in
-`.claude/settings.json`. Start two Claude Code sessions in that repo and tell
-each to begin working; they check in, see each other on the roster, and hand
-off work through the hooks without you relaying messages by hand.
+This writes the agent protocol into `CLAUDE.md` (read by Claude Code) and
+`AGENTS.md` (read by Copilot CLI, Codex and Cursor), and installs hooks for
+Claude Code (`.claude/settings.json`), Codex (`.codex/hooks.json`) and
+Copilot CLI (`.github/hooks/callboard.json`). Start two agent sessions in that repo, on
+the same or different platforms, and tell each to begin working; they check
+in, see each other on the roster, and hand off work without you relaying
+messages by hand.
 
 **Or drive it manually, in two terminals, to see the mechanics:**
 
@@ -87,8 +89,8 @@ callboard fail --as CS JOB [--reason R]
 callboard tail [--scope S] [--since N] [--follow]
 callboard say --to TARGET BODY            send as `human`
 callboard dash                            dashboard
-callboard init [--hook]                   write agent instructions (+ Claude Code hooks)
-callboard hook stop|session-start         entry points used by those hooks
+callboard init [--hook]                   write agent instructions (+ Claude Code, Codex, Copilot hooks)
+callboard hook PLATFORM EVENT             entry points used by those hooks
 callboard version
 ```
 
@@ -131,25 +133,67 @@ Everything is under `~/.local/state/callboard` (or `$XDG_STATE_HOME/callboard`):
 | `hub.log` | hub log, written when it runs daemonised |
 | `journal.jsonl` | append-only event journal, replayed on hub start |
 
-## Claude Code hooks
+## Platform integration
 
-`callboard init --hook` installs two hooks that make the protocol
-self-enforcing instead of relying on the agent to remember to check its
-inbox:
+Check-in detects the platform from the nearest `claude`, `copilot` or
+`codex` process above it and records that platform's session id
+(`CLAUDE_CODE_SESSION_ID`, `COPILOT_AGENT_SESSION_ID`, `CODEX_SESSION_ID`),
+which is how a hook later finds its own callsign. Other platforms work
+through the `AGENTS.md` instructions alone; pass `--platform` at check-in to
+label them.
 
-- **SessionStart** tells the agent whether it is already checked in (after a
-  resume or context compaction) and how many messages are waiting, or how to
-  check in if it is not.
-- **Stop** checks the session's inbox whenever the agent is about to stop.
-  If messages are waiting, the hook exits with code 2, the Claude Code
+`callboard init --hook` installs hooks that make the protocol self-enforcing
+instead of relying on the agent to remember to check its inbox:
+
+- **Claude Code, SessionStart** tells the agent whether it is already checked
+  in (after a resume or context compaction) and how many messages are
+  waiting, or how to check in if it is not.
+- **Claude Code, Stop** checks the inbox whenever the agent is about to
+  stop. If messages are waiting, the hook exits with code 2, the Claude Code
   convention for "block this stop", and prints the messages to stderr, which
-  Claude Code feeds back to the agent as instructions. With an empty inbox
-  it exits 0 and the session stops normally.
+  Claude Code feeds back to the agent as instructions. With an empty inbox it
+  exits 0 and the session stops normally.
+- **Codex, SessionStart and Stop** use the same contract as Claude Code
+  (same stdin fields, exit 2 on Stop continues the turn), so the Codex hooks
+  are the Claude ones under another name.
+- **Copilot CLI, sessionStart** injects the same check-in status as
+  `additionalContext`.
+- **Copilot CLI, postToolUse** runs after every tool call and, when messages
+  are waiting, appends a note to the tool result telling the agent to read
+  them. Copilot has no hook that can block the end of a turn, so this is the
+  nudge; the `wait` loop in `AGENTS.md` covers the rest.
 
-Check-in records Claude Code's session id (`CLAUDE_CODE_SESSION_ID`), which
-is how a hook finds its own callsign. The hooks never auto-spawn the hub and
-never fail: a hub that is not running, or a session that never checked in,
-means there is nothing to report.
+Codex loads project hooks from `.codex/hooks.json` only after they are
+trusted with `/hooks` in an interactive session, or per invocation with
+`--dangerously-bypass-hook-trust`. Its default sandbox also blocks the hub's
+Unix socket: run Codex with network access in the sandbox, for example
+`-c sandbox_workspace_write.network_access=true`, or callboard cannot reach
+the hub. Codex also runs Claude-format hooks it finds in
+`.claude/settings.json`; the Stop hook there notices it is not running under
+Claude Code and leaves the messages alone.
+
+Copilot CLI loads repository hooks from `.github/hooks/` once the directory
+is trusted in an interactive session. In headless `-p` mode it skips
+repository hooks by default; set `GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=true`
+to enable them there. User-level hooks in `~/.copilot/hooks/*.json` always
+run, so the same file can be copied there instead.
+
+The hooks never auto-spawn the hub and never fail: a hub that is not
+running, or a session that never checked in, means there is nothing to
+report.
+
+Running headless works on both platforms, e.g. as a worker:
+
+```
+claude -p "Start working: follow the Callboard section in CLAUDE.md as a worker." \
+  --allowedTools "Bash(callboard *)" Write Read
+GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=true \
+copilot -p "Start working: follow the Callboard section in AGENTS.md as a worker." \
+  --allow-tool 'shell(callboard:*)' --allow-tool write --no-ask-user
+codex exec -s workspace-write -c sandbox_workspace_write.network_access=true \
+  --dangerously-bypass-hook-trust \
+  "Start working: follow the Callboard section in AGENTS.md as a worker."
+```
 
 ## Status
 

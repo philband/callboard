@@ -3,6 +3,10 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/philband/callboard/internal/api"
 	"github.com/philband/callboard/internal/config"
@@ -50,12 +54,9 @@ func runCheckin(args []string) int {
 		}
 	}
 
-	plat, session := *platform, os.Getenv("CLAUDE_CODE_SESSION_ID")
-	if plat == "" {
-		plat = "unknown"
-		if session != "" {
-			plat = "claude-code"
-		}
+	plat, session := detectPlatform()
+	if *platform != "" {
+		plat = *platform
 	}
 
 	ctx, stop := signalContext()
@@ -108,4 +109,68 @@ func runCheckin(args []string) int {
 	fmt.Printf("\nnext: pass --as %s (or export CALLBOARD_AS=%s) on every command; run `callboard wait --as %s` when you are done with your current task.\n",
 		s.Callsign, s.Callsign, s.Callsign)
 	return ExitOK
+}
+
+// detectPlatform identifies the agent platform running this command and that
+// platform's own session id, so hooks can find their callsign later. The
+// nearest agent process among our ancestors decides, because a session
+// started from inside another agent's shell inherits both environments.
+func detectPlatform() (platform, session string) {
+	sessionEnv := map[string]string{
+		"claude-code": "CLAUDE_CODE_SESSION_ID",
+		"copilot":     "COPILOT_AGENT_SESSION_ID",
+		"codex":       "CODEX_SESSION_ID",
+	}
+	platform = nearestAgentAncestor()
+	if platform == "" && os.Getenv("CODEX_SANDBOX") != "" {
+		// Codex's sandbox forbids ps, so ancestry is unavailable there; the
+		// sandbox marker itself is set per command and is unambiguous.
+		platform = "codex"
+	}
+	if platform == "" {
+		for _, p := range []string{"claude-code", "copilot", "codex"} {
+			if os.Getenv(sessionEnv[p]) != "" {
+				platform = p
+				break
+			}
+		}
+	}
+	if platform == "" && os.Getenv("COPILOT_CLI") != "" {
+		platform = "copilot"
+	}
+	if platform == "" {
+		return "unknown", ""
+	}
+	return platform, os.Getenv(sessionEnv[platform])
+}
+
+// nearestAgentAncestor walks up the process tree and names the first agent
+// CLI it finds ("claude" or "copilot" executables), or "".
+func nearestAgentAncestor() string {
+	pid := os.Getppid()
+	for depth := 0; depth < 20 && pid > 1; depth++ {
+		out, err := exec.Command("ps", "-o", "ppid=,comm=", "-p", strconv.Itoa(pid)).Output()
+		if err != nil {
+			return ""
+		}
+		fields := strings.Fields(string(out))
+		if len(fields) < 2 {
+			return ""
+		}
+		ppid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			return ""
+		}
+		comm := strings.Join(fields[1:], " ")
+		switch base := strings.TrimPrefix(filepath.Base(comm), "-"); {
+		case base == "claude":
+			return "claude-code"
+		case base == "copilot", strings.Contains(comm, "/@github/copilot/"):
+			return "copilot"
+		case base == "codex":
+			return "codex"
+		}
+		pid = ppid
+	}
+	return ""
 }

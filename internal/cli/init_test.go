@@ -170,27 +170,9 @@ func TestInitBlock_ReplacesDriftedBlockInPlace(t *testing.T) {
 	}
 }
 
-func TestInitDefaultFiles_ClaudeOnlyWhenNeitherExists(t *testing.T) {
-	dir := t.TempDir()
-	got := initDefaultFiles(dir)
-	want := []string{"CLAUDE.md"}
-	if len(got) != len(want) || got[0] != want[0] {
-		t.Fatalf("initDefaultFiles = %v, want %v", got, want)
-	}
-}
-
-func TestInitDefaultFiles_OnlyExistingOnes(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("existing\n"), 0644); err != nil {
-		t.Fatalf("seeding AGENTS.md: %v", err)
-	}
-	if got := initDefaultFiles(dir); len(got) != 1 || got[0] != "AGENTS.md" {
-		t.Fatalf("initDefaultFiles = %v, want [AGENTS.md]", got)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("existing\n"), 0644); err != nil {
-		t.Fatalf("seeding CLAUDE.md: %v", err)
-	}
-	if got := initDefaultFiles(dir); len(got) != 2 || got[0] != "CLAUDE.md" || got[1] != "AGENTS.md" {
+func TestInitDefaultFiles_Both(t *testing.T) {
+	got := initDefaultFiles(t.TempDir())
+	if len(got) != 2 || got[0] != "CLAUDE.md" || got[1] != "AGENTS.md" {
 		t.Fatalf("initDefaultFiles = %v, want [CLAUDE.md AGENTS.md]", got)
 	}
 }
@@ -213,15 +195,35 @@ func TestInitCommand_DefaultFilesAndHookJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, out)
 	}
-	if len(result.Files) != 2 {
-		t.Fatalf("files = %v, want 2 entries (CLAUDE.md, hooks)", result.Files)
+	want := []string{"CLAUDE.md", "AGENTS.md", filepath.Join(".claude", "settings.json"), filepath.Join(".codex", "hooks.json"), filepath.Join(".github", "hooks", "callboard.json")}
+	if len(result.Files) != len(want) {
+		t.Fatalf("files = %v, want %v", result.Files, want)
 	}
-	if result.Files[0].File != "CLAUDE.md" || result.Files[0].Status != "created" {
-		t.Fatalf("unexpected CLAUDE.md result: %+v", result.Files[0])
+	for i, w := range want {
+		if result.Files[i].File != w || result.Files[i].Status != "created" {
+			t.Fatalf("files[%d] = %+v, want %s created", i, result.Files[i], w)
+		}
 	}
 	wantHookFile := filepath.Join(".claude", "settings.json")
-	if result.Files[1].File != wantHookFile || result.Files[1].Status != "created" {
-		t.Fatalf("unexpected hook result: %+v", result.Files[1])
+	if data, err := os.ReadFile(filepath.Join(dir, ".github", "hooks", "callboard.json")); err != nil || string(data) != copilotHooksFile {
+		t.Fatalf("copilot hooks file: err=%v content=%q", err, data)
+	}
+	codexSettings := readSettings(t, filepath.Join(dir, ".codex", "hooks.json"))
+	assertHookCommandPresent(t, codexSettings, "SessionStart", "callboard hook codex session-start")
+	assertHookCommandPresent(t, codexSettings, "Stop", "callboard hook codex stop")
+	// A second run leaves everything unchanged.
+	out = captureStdout(t, func() {
+		if code := runInit([]string{"-dir", dir, "-hook", "-json"}); code != ExitOK {
+			t.Fatalf("second runInit exit code = %d", code)
+		}
+	})
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range result.Files {
+		if f.Status != "unchanged" {
+			t.Fatalf("second run: %+v, want unchanged", f)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, wantHookFile)); err != nil {
 		t.Fatalf("settings.json not written: %v", err)
@@ -272,7 +274,7 @@ func TestHooksInstall_CreatesFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".claude", "settings.json")
 
-	status, err := initInstallHooks(path)
+	status, err := initInstallHooks(path, "claude-code")
 	if err != nil {
 		t.Fatalf("initInstallHooks: %v", err)
 	}
@@ -281,8 +283,8 @@ func TestHooksInstall_CreatesFile(t *testing.T) {
 	}
 
 	settings := readSettings(t, path)
-	assertHookCommandPresent(t, settings, "SessionStart", "callboard hook session-start")
-	assertHookCommandPresent(t, settings, "Stop", "callboard hook stop")
+	assertHookCommandPresent(t, settings, "SessionStart", "callboard hook claude-code session-start")
+	assertHookCommandPresent(t, settings, "Stop", "callboard hook claude-code stop")
 }
 
 func TestHooksInstall_PreservesUnrelatedKeysAndHooks(t *testing.T) {
@@ -304,7 +306,7 @@ func TestHooksInstall_PreservesUnrelatedKeysAndHooks(t *testing.T) {
 		t.Fatalf("seeding file: %v", err)
 	}
 
-	status, err := initInstallHooks(path)
+	status, err := initInstallHooks(path, "claude-code")
 	if err != nil {
 		t.Fatalf("initInstallHooks: %v", err)
 	}
@@ -317,18 +319,18 @@ func TestHooksInstall_PreservesUnrelatedKeysAndHooks(t *testing.T) {
 		t.Fatalf("unrelated key lost: %v", settings)
 	}
 	assertHookCommandPresent(t, settings, "PreToolUse", "some-other-hook")
-	assertHookCommandPresent(t, settings, "SessionStart", "callboard hook session-start")
-	assertHookCommandPresent(t, settings, "Stop", "callboard hook stop")
+	assertHookCommandPresent(t, settings, "SessionStart", "callboard hook claude-code session-start")
+	assertHookCommandPresent(t, settings, "Stop", "callboard hook claude-code stop")
 }
 
 func TestHooksInstall_NoDuplicateOnSecondRun(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".claude", "settings.json")
 
-	if _, err := initInstallHooks(path); err != nil {
+	if _, err := initInstallHooks(path, "claude-code"); err != nil {
 		t.Fatalf("first install: %v", err)
 	}
-	status, err := initInstallHooks(path)
+	status, err := initInstallHooks(path, "claude-code")
 	if err != nil {
 		t.Fatalf("second install: %v", err)
 	}
@@ -337,10 +339,10 @@ func TestHooksInstall_NoDuplicateOnSecondRun(t *testing.T) {
 	}
 
 	settings := readSettings(t, path)
-	if n := hookCommandCount(t, settings, "Stop", "callboard hook stop"); n != 1 {
+	if n := hookCommandCount(t, settings, "Stop", "callboard hook claude-code stop"); n != 1 {
 		t.Fatalf("Stop hook command count = %d, want 1", n)
 	}
-	if n := hookCommandCount(t, settings, "SessionStart", "callboard hook session-start"); n != 1 {
+	if n := hookCommandCount(t, settings, "SessionStart", "callboard hook claude-code session-start"); n != 1 {
 		t.Fatalf("SessionStart hook command count = %d, want 1", n)
 	}
 }
@@ -356,7 +358,7 @@ func TestHooksInstall_InvalidJSONFails(t *testing.T) {
 		t.Fatalf("seeding file: %v", err)
 	}
 
-	if _, err := initInstallHooks(path); err == nil {
+	if _, err := initInstallHooks(path, "claude-code"); err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
 
