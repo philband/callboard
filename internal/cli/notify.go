@@ -24,9 +24,8 @@ func init() {
 
 // Timings. Package vars rather than constants so tests can shorten them.
 var (
-	// notifyPeekWait is how long one inbox long-poll blocks. Long, because
-	// the daemon lives as long as the session it pushes into.
-	notifyPeekWait = 4 * time.Hour
+	// Poll before ActiveWindow expires so quiet sessions retain their heartbeat.
+	notifyPeekWait = time.Minute
 	// notifyRetryMin and notifyRetryMax bound the backoff on hub errors.
 	notifyRetryMin = 5 * time.Second
 	notifyRetryMax = 60 * time.Second

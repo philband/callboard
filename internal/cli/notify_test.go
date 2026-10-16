@@ -63,6 +63,42 @@ func notifyCheckin(t *testing.T, cl *client.Client, name string) string {
 
 type pushCall struct{ platform, thread, text string }
 
+func TestQuietNotifierRenewsHeartbeat(t *testing.T) {
+	if notifyPeekWait >= api.ActiveWindow {
+		t.Fatal("notifier poll must renew activity before the session becomes idle")
+	}
+	notifyFastTimings(t)
+	notifyPeekWait = 20 * time.Millisecond
+	cl := notifyHub(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cs := notifyCheckin(t, cl, "quiet")
+	before, err := cl.Sessions(ctx, "proj")
+	if err != nil || len(before) != 1 {
+		t.Fatalf("sessions: %v, %v", before, err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- runNotifyLoop(ctx, cl, cs, "codex", "thread-1", func(_, _, _ string) error {
+			t.Error("quiet session should not push a message")
+			return nil
+		})
+	}()
+	defer func() { cancel(); <-done }()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		sessions, err := cl.Sessions(ctx, "proj")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(sessions) == 1 && sessions[0].LastSeen.Sub(before[0].LastSeen) >= 20*time.Millisecond {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("notifier did not renew its heartbeat while the inbox was empty")
+}
+
 func TestNotifyLoopPushesAndAcknowledges(t *testing.T) {
 	notifyFastTimings(t)
 	cl := notifyHub(t)

@@ -125,8 +125,14 @@ func runCheckin(args []string) int {
 // `codex exec` (marked by CODEX_CI) ends after one turn, so a queued message
 // would never be read.
 func notifierNote(callsign, platform, platformSession string, agentPid int, disabled bool) string {
-	if disabled || platform != "codex" || platformSession == "" || os.Getenv("CODEX_CI") != "" {
+	if disabled || platform != "codex" || platformSession == "" {
 		return ""
+	}
+	if os.Getenv("CODEX_CI") != "" {
+		args, _ := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(agentPid)).Output()
+		if codexOneShot(os.Getenv("CODEX_CI"), string(args)) {
+			return ""
+		}
 	}
 	if os.Getenv("CODEX_SANDBOX") != "" {
 		// The agent's shell runs inside Codex's seatbelt sandbox, which no
@@ -142,6 +148,13 @@ func notifierNote(callsign, platform, platformSession string, agentPid int, disa
 		return ""
 	}
 	return "notifier started: messages will arrive in this session as new prompts; you do not need to run `callboard wait`"
+}
+
+// App-server sessions also export CODEX_CI, but remain available for queued
+// messages after a turn ends. Keep the one-shot guard for exec and unknown hosts.
+func codexOneShot(ci, processArgs string) bool {
+	args := strings.Fields(processArgs)
+	return ci != "" && !(len(args) > 1 && args[1] == "app-server")
 }
 
 // detectPlatform identifies the agent platform running this command, that

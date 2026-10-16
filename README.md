@@ -195,6 +195,9 @@ the hub allows waits up to 24 hours. What "background" means per platform:
   runs hooks outside its sandbox but the agent's shell commands inside it.
   The daemon exits when the Codex process ends. `codex exec` sessions end
   after one turn, so there the agent runs `wait` normally.
+  Check-in also starts the notifier for persistent `codex app-server`
+  sessions, even when they export `CODEX_CI=1`. The notifier polls at least
+  once a minute to keep quiet workers active on the board.
 - A `wait` that gets killed loses nothing: the hub marks messages delivered
   only after the response reached the client.
 

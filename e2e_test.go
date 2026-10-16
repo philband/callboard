@@ -47,6 +47,8 @@ func (e *env) environ() []string {
 		"CALLBOARD_CONFIG="+filepath.Join(e.state, "no-config.json"),
 		"CALLBOARD_AS=",
 		"CLAUDE_CODE_SESSION_ID=",
+		"CODEX_SESSION_ID=",
+		"CODEX_THREAD_ID=",
 	)
 }
 
