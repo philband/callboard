@@ -13,6 +13,8 @@ func TestCodexOneShot(t *testing.T) {
 		{"unknown", "1", "", true},
 		{"app server", "1", "/bin/codex app-server --listen unix:// --managed-daemon", false},
 		{"exec mentioning app server", "1", "/bin/codex exec app-server", true},
+		{"interactive tui", "1", "/opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox -c x=1 You are a worker; exec the review", false},
+		{"exec after flags", "1", "/bin/codex -c x=1 exec task", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := codexOneShot(tt.ci, tt.args); got != tt.want {

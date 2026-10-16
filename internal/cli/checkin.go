@@ -152,11 +152,36 @@ func notifierNote(callsign, platform, platformSession string, agentPid int, disa
 	return "notifier started: messages will arrive in this session as new prompts; you do not need to run `callboard wait`"
 }
 
-// App-server sessions also export CODEX_CI, but remain available for queued
-// messages after a turn ends. Keep the one-shot guard for exec and unknown hosts.
+// Interactive and app-server sessions also export CODEX_CI, but remain
+// available for queued messages after a turn ends. Only `codex exec` (alias
+// `e`) and `codex review` end with the turn, so the first positional
+// argument decides; an unreadable command line is treated as one-shot.
 func codexOneShot(ci, processArgs string) bool {
+	if ci == "" {
+		return false
+	}
 	args := strings.Fields(processArgs)
-	return ci != "" && !(len(args) > 1 && args[1] == "app-server")
+	if len(args) < 2 {
+		return true
+	}
+	for i := 1; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "-") {
+			if codexValueFlags[a] {
+				i++ // skip the flag's value
+			}
+			continue
+		}
+		return a == "exec" || a == "e" || a == "review"
+	}
+	return false
+}
+
+// codexValueFlags are the Codex global flags that take a separate value.
+var codexValueFlags = map[string]bool{
+	"-c": true, "--config": true, "-m": true, "--model": true, "-s": true, "--sandbox": true,
+	"-a": true, "--ask-for-approval": true, "-p": true, "--profile": true, "-C": true, "--cd": true,
+	"-i": true, "--image": true, "--enable": true, "--disable": true, "--add-dir": true, "--local-provider": true,
 }
 
 // detectPlatform identifies the agent platform running this command, that
