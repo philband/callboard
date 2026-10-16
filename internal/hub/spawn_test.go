@@ -180,6 +180,15 @@ func TestSpawnCaps(t *testing.T) {
 	if _, err := h.Spawn(api.SpawnRequest{Cwd: "/r"}); err == nil || !strings.Contains(err.Error(), "slots") {
 		t.Fatalf("global cap not enforced: %v", err)
 	}
+	// Hand-started sessions count toward the global cap too.
+	h.spawnCfg.MaxTotal = 4
+	checkin(t, h, "solo", "proj")
+	if _, err := h.Spawn(api.SpawnRequest{Cwd: "/r"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Spawn(api.SpawnRequest{Cwd: "/r"}); err == nil || !strings.Contains(err.Error(), "slots") {
+		t.Fatalf("hand-started session not counted: %v", err)
+	}
 }
 
 func TestSpawnForJobReservesAndRetiresOnFullContext(t *testing.T) {

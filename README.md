@@ -146,8 +146,9 @@ spawning is off. Changes take effect after `callboard restart`.
 `config_dir` becomes `CLAUDE_CONFIG_DIR` or `CODEX_HOME`; leave it out for
 the platform's default login (the variable is then unset, which matters for
 Claude: setting it to `~/.claude` selects a different keychain entry).
-`max` (per account) and `max_total` cap concurrent sessions, 0 meaning no
-cap. `pool: false` keeps an account out of automatic choice; it is used only
+`max` caps an account's spawned sessions; `max_total` caps all agent
+sessions on the board, counting hand-started ones that are not gone, so
+spawns stop once the machine is that busy. 0 means no cap. `pool: false` keeps an account out of automatic choice; it is used only
 when named. `permission` is `bypass` (skip all permission prompts and the
 sandbox), `auto`, or a mode the CLI accepts, per account or globally.
 `model` and `context_window` (tokens, for the keep rule; Claude defaults to

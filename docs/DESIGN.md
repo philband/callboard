@@ -197,7 +197,7 @@ resolution.
 | Permissions | `bypass` by default, configurable globally and per account. |
 | Isolation | Worker decides (same checkout by default; the protocol lets it make a worktree). |
 | Lifetime | One job per session. After the job, a session using less than 10% of its context window is kept for the next job; otherwise it is stopped. The coordinator is never spawned. |
-| Caps | Global and per account, 0 meaning none. |
+| Caps | Per account (spawned sessions) and global (all live agent sessions on the board, hand-started included), 0 meaning none. |
 | Platform | The poster chooses (`post --platform`); otherwise any. |
 
 The hub owns the supervisor: a 5s loop that answers start-up dialogs

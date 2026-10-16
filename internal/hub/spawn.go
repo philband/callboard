@@ -88,6 +88,18 @@ func (h *Hub) live() (map[string]int, int) {
 	return per, total
 }
 
+// handStarted counts agent sessions on the board that the hub did not spawn
+// and that are still alive or blocked in a wait. Caller holds mu.
+func (h *Hub) handStarted() int {
+	n := 0
+	for _, s := range h.sessions {
+		if s.Spawn == "" && s.Callsign != api.Human && (h.status(s) != api.StatusGone || h.waiting[s.Callsign] > 0) {
+			n++
+		}
+	}
+	return n
+}
+
 // limited reports whether an account is resting after a limit. Caller holds mu.
 func (h *Hub) limited(name string) (api.Limit, bool) {
 	l, ok := h.limits[name]
@@ -97,8 +109,8 @@ func (h *Hub) limited(name string) (api.Limit, bool) {
 // pickAccount chooses the account for a spawn. Caller holds mu.
 func (h *Hub) pickAccount(name, platform string) (config.Account, error) {
 	per, total := h.live()
-	if max := h.spawnCfg.MaxTotal; max > 0 && total >= max {
-		return config.Account{}, conflict("all %d spawn slots are in use", max)
+	if max := h.spawnCfg.MaxTotal; max > 0 && total+h.handStarted() >= max {
+		return config.Account{}, conflict("all %d session slots are in use", max)
 	}
 	if name != "" {
 		a, ok := h.account(name)

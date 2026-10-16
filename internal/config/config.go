@@ -23,7 +23,8 @@ type Config struct {
 // Spawn configures spawning. With no accounts spawning is off.
 type Spawn struct {
 	Accounts []Account `json:"accounts"`
-	// MaxTotal caps spawned sessions across all accounts; 0 means no cap.
+	// MaxTotal caps agent sessions on this machine, spawned and hand-started
+	// alike; 0 means no cap.
 	MaxTotal int `json:"max_total"`
 	// Permission is the default permission mode for spawned sessions:
 	// "bypass" (default), "auto", or any mode the platform's CLI accepts.
