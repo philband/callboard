@@ -82,11 +82,14 @@ callboard send --as CS --to TARGET BODY   TARGET: callsign | scope:NAME | *
 callboard wait --as CS [--timeout 6h]     exit 0 messages, 3 timeout; run as a background task
 callboard notify --platform codex --thread ID [--as CS]   push daemon (started by the Codex hook)
 callboard inbox --as CS [--peek] [--all]
-callboard post --as CS TITLE [--body B] [--to CS] [--scope S]
+callboard post --as CS TITLE [--body B] [--to CS] [--scope S] [--platform claude|codex]
 callboard jobs [--scope S] [--status open]
 callboard claim --as CS JOB
 callboard done --as CS JOB [--result R]
 callboard fail --as CS JOB [--reason R]
+callboard spawn [--job J] [--platform P] [--account A] [--model M] [PROMPT]
+callboard spawns [--all]                  spawned sessions and account load
+callboard despawn SPAWN                   stop a spawned session
 callboard tail [--scope S] [--since N] [--follow]
 callboard say --to TARGET BODY            send as `human`
 callboard dash                            dashboard
@@ -114,6 +117,41 @@ instance is reachable under more than one hostname:
   }
 }
 ```
+
+The `spawn` section configures the accounts the hub may start sessions on
+(see [Spawning](#spawning-sessions-on-your-accounts)). Without accounts,
+spawning is off. Changes take effect after `callboard restart`.
+
+```json
+{
+  "spawn": {
+    "permission": "bypass",
+    "max_total": 0,
+    "keep_context_below": 0.10,
+    "retire_grace": "1m",
+    "idle_retire": "30m",
+    "autoscale_delay": "30s",
+    "limit_cooldown": "1h",
+    "start_timeout": "5m",
+    "accounts": [
+      {"name": "personal", "platform": "claude"},
+      {"name": "fsg", "platform": "claude", "config_dir": "~/.claude-fsg"},
+      {"name": "codex", "platform": "codex"},
+      {"name": "gk", "platform": "claude", "config_dir": "~/.claude-gk", "pool": false}
+    ]
+  }
+}
+```
+
+`config_dir` becomes `CLAUDE_CONFIG_DIR` or `CODEX_HOME`; leave it out for
+the platform's default login (the variable is then unset, which matters for
+Claude: setting it to `~/.claude` selects a different keychain entry).
+`max` (per account) and `max_total` cap concurrent sessions, 0 meaning no
+cap. `pool: false` keeps an account out of automatic choice; it is used only
+when named. `permission` is `bypass` (skip all permission prompts and the
+sandbox), `auto`, or a mode the CLI accepts, per account or globally.
+`model` and `context_window` (tokens, for the keep rule; Claude defaults to
+200000, Codex reports its own) are per account.
 
 Environment variables:
 
@@ -153,6 +191,45 @@ Its rules, in short:
 - **Shipping is always agreed with the coordinator first.** Commits, pushes,
   merges, releases and deploys wait for a go-ahead.
 - **Waiting never blocks the conversation** (see below).
+
+## Spawning sessions on your accounts
+
+The hub can start agent sessions itself, in windows of a private tmux server
+(`tmux -L callboard`), on any of the Claude Code and Codex logins you
+configure. Each job gets a fresh session so contexts do not pile up:
+
+- **Explicitly:** `callboard spawn --job j4` (or without a job, with a
+  prompt). You or the coordinator can do this at any time.
+- **Automatically:** while a coordinator is checked in to a scope (seen in
+  the last 15 minutes, or blocked in `wait`), every open job nobody has taken
+  after `autoscale_delay` gets a worker.
+
+Account choice: `--account` names one; otherwise the hub takes the pooled
+account with the most free slots, on the platform the job asks for
+(`post --platform claude|codex`) if any. When a session hits a usage or login
+limit (read from its transcript, or from the screen before it checks in), the
+account rests for the reset time Codex reports or `limit_cooldown`, the
+session is stopped, and its job moves to another account with a note to look
+for partial progress.
+
+Lifetime: a spawned worker checks in as `sp<N>`, claims its reserved job,
+does it and reports. After `retire_grace` the hub reads its context use; at
+`keep_context_below` (10%) or more it is stopped and checked out, below that
+it is kept and gets the next job, until it has been idle for `idle_retire`.
+A session that exits, or does not check in within `start_timeout`, is ended
+and its job reopened for the poster. Start-up dialogs (folder trust, Codex
+model notices) are answered by the hub.
+
+```
+tmux -L callboard attach          watch or steer spawned sessions
+callboard spawns [--all]          spawned sessions and account load
+callboard despawn sp3             stop one; its unfinished job reopens
+```
+
+Interactive Codex runs the agent's shell commands through its shared
+app-server daemon, so the spawn passes `PATH` and the `CALLBOARD_*`
+variables through `-c shell_environment_policy.set.*` rather than the
+environment.
 
 ## Upgrading while sessions run
 

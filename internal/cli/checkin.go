@@ -18,7 +18,7 @@ func init() {
 }
 
 func runCheckin(args []string) int {
-	fs := newFlags("checkin", "-name NAME [-role R] [-platform P] [-scope S]... [-intro TEXT] [-cwd DIR] [-no-notify]")
+	fs := newFlags("checkin", "-name NAME [-role R] [-platform P] [-scope S]... [-intro TEXT] [-cwd DIR] [-no-notify] [-spawn ID]")
 	var c common
 	c.bind(fs, false)
 	name := fs.String("name", "", "what to call you, e.g. reviewer (required)")
@@ -27,6 +27,7 @@ func runCheckin(args []string) int {
 	intro := fs.String("intro", "", "one line about what you are here to do")
 	cwd := fs.String("cwd", "", "working directory (default: the current one)")
 	noNotify := fs.Bool("no-notify", false, "do not start the push notifier for this session")
+	spawnID := fs.String("spawn", os.Getenv("CALLBOARD_SPAWN"), "spawn id, for sessions started by `callboard spawn` (default $CALLBOARD_SPAWN)")
 	var extra stringList
 	fs.Var(&extra, "scope", "extra scope on top of the detected one (repeatable)")
 	if ok, code := parse(fs, args); !ok {
@@ -75,6 +76,7 @@ func runCheckin(args []string) int {
 		Scopes:          scopes,
 		Intro:           *intro,
 		PlatformSession: session,
+		Spawn:           *spawnID,
 	})
 	if err != nil {
 		return fail(err)

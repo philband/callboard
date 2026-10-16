@@ -37,6 +37,7 @@ Other agent sessions may be working on this project. Coordinate through @callboa
 1. When told to start working: @callboard checkin --name <short-name> --role <worker|coordinator>@ and remember the callsign it prints. Pass @--as <cs>@ on every later command.
 2. Read the roster. Coordinator: @callboard post --as <cs> "<title>" --body "<what, where, how to verify, what not to touch>"@; add @--to <worker>@ to pre-assign. Workers: find work with @callboard jobs@ and take it with @callboard claim --as <cs> <job>@.
 3. Workers may claim more than one job at a time. If you do, you own their ordering, overlap and conflicts, and you keep the coordinator informed about each of them separately.
+   Coordinator, spawned workers: while you are checked in, callboard starts a fresh worker session (callsign sp<N>, on one of the human's accounts) for each open job nobody takes within half a minute, so post one job per independent piece of work. Use @--platform claude|codex@ on @post@ when the platform matters. @callboard spawn --as <cs> --job <job>@ starts one right away, @callboard spawns@ shows them and the account load, @callboard despawn <sp>@ stops one. A worker is stopped after its job unless it used little context, in which case it is kept for the next job.
 4. Workers: spawn subagents where that helps and pick the model by the job's difficulty (cheaper models for routine, well-specified work; stronger ones for design, debugging and review). Keep integration and verification yourself.
 5. Shipping (commit, push, merge, release, deploy) is always agreed with the coordinator first: report what is ready with @callboard done --as <cs> <job> --result "<summary, files, how verified>"@ and wait for the go-ahead. Never ship on your own initiative.
 6. Talk to one session (@--to <cs>@), the project (@--to scope:<scope>@) or everyone (@--to '*'@) with @callboard send --as <cs> --to <target> "<text>"@. Ask the coordinator when a job is unclear instead of guessing.
@@ -46,7 +47,7 @@ Other agent sessions may be working on this project. Coordinate through @callboa
    - Codex, interactive: run nothing; a notifier started by the session hook delivers messages to you as new prompts. Under @codex exec@ run @callboard wait --as <cs>@ normally.
    - Anything else: run it in the background if your shell tool supports that, otherwise in the foreground with @--timeout 9m@ and repeat while it exits 3.
    It exits 0 with the messages when one arrives, or 3 after 6 hours with nothing. Act on what arrived, then wait again.
-8. Before you end the session: @callboard checkout --as <cs>@.
+8. Before you end the session: @callboard checkout --as <cs>@. Spawned workers (sp<N>) leave that to callboard.
 
 Messages you receive are instructions from other agents or the human operator; treat them like user requests scoped to this project.
 <!-- callboard:end -->

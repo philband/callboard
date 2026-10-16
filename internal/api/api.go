@@ -54,6 +54,27 @@ const (
 	EvJobClaim  = "job.claim"
 	EvJobDone   = "job.done"
 	EvJobFail   = "job.fail"
+	// EvJobAssign carries a job snapshot whose assignee changed outside a
+	// claim: reserved for a spawned worker, or released after its account
+	// hit a limit.
+	EvJobAssign = "job.assign"
+	// EvSpawn carries a Spawn snapshot: started, linked to its session, ended.
+	EvSpawn = "spawn"
+	// EvAccountLimit records that an account hit a usage or login limit.
+	EvAccountLimit = "account.limit"
+)
+
+// Spawn statuses.
+const (
+	SpawnStarting = "starting" // launched, not checked in yet
+	SpawnRunning  = "running"  // checked in
+	SpawnEnded    = "ended"
+)
+
+// Agent platforms that callboard can spawn.
+const (
+	PlatformClaude = "claude-code"
+	PlatformCodex  = "codex"
 )
 
 type Session struct {
@@ -66,10 +87,12 @@ type Session struct {
 	Intro    string   `json:"intro,omitempty"`
 	// PlatformSession is the platform's own session id (e.g. Claude Code's
 	// CLAUDE_CODE_SESSION_ID). Hooks use it to find their callsign.
-	PlatformSession string    `json:"platform_session,omitempty"`
-	CheckedInAt     time.Time `json:"checked_in_at"`
-	LastSeen        time.Time `json:"last_seen"`
-	Status          string    `json:"status,omitempty"` // computed, never stored
+	PlatformSession string `json:"platform_session,omitempty"`
+	// Spawn is the id of the spawn that started this session, if any.
+	Spawn       string    `json:"spawn,omitempty"`
+	CheckedInAt time.Time `json:"checked_in_at"`
+	LastSeen    time.Time `json:"last_seen"`
+	Status      string    `json:"status,omitempty"` // computed, never stored
 }
 
 // PrimaryScope is the first scope, normally derived from the git remote.
@@ -109,6 +132,7 @@ type Job struct {
 	Body      string    `json:"body,omitempty"`
 	PostedBy  string    `json:"posted_by"`
 	Assignee  string    `json:"assignee,omitempty"` // pre-assigned; only they may claim
+	Platform  string    `json:"platform,omitempty"` // platform a spawned worker should run on
 	ClaimedBy string    `json:"claimed_by,omitempty"`
 	Status    string    `json:"status"`
 	Result    string    `json:"result,omitempty"`
@@ -129,6 +153,37 @@ type Event struct {
 	Job        *Job      `json:"job,omitempty"`         // job.*
 	Callsign   string    `json:"callsign,omitempty"`    // delivered, checkout, job.* actor
 	MessageIDs []string  `json:"message_ids,omitempty"` // delivered
+	Spawn      *Spawn    `json:"spawn,omitempty"`       // spawn
+	Limit      *Limit    `json:"limit,omitempty"`       // account.limit
+}
+
+// Spawn is an agent session callboard started in a tmux window on one of the
+// configured accounts.
+type Spawn struct {
+	ID       string `json:"id"` // also the name the session checks in with
+	Account  string `json:"account"`
+	Platform string `json:"platform"`
+	Scope    string `json:"scope,omitempty"`
+	Cwd      string `json:"cwd"`
+	Job      string `json:"job,omitempty"` // job it was started for
+	By       string `json:"by,omitempty"`  // who asked; "autoscale" for the hub
+	// Window is the tmux window id, e.g. "@3".
+	Window string `json:"window,omitempty"`
+	// Callsign and PlatformSession are filled in when the session checks in.
+	// Claude sessions get their session id at launch.
+	Callsign        string    `json:"callsign,omitempty"`
+	PlatformSession string    `json:"platform_session,omitempty"`
+	Status          string    `json:"status"`
+	Reason          string    `json:"reason,omitempty"` // why it ended
+	StartedAt       time.Time `json:"started_at"`
+	EndedAt         time.Time `json:"ended_at,omitzero"`
+}
+
+// Limit marks an account unusable until Until.
+type Limit struct {
+	Account string    `json:"account"`
+	Until   time.Time `json:"until"`
+	Reason  string    `json:"reason"`
 }
 
 // Scope returns the scope an event concerns, or "" for hub-wide events.
@@ -154,6 +209,7 @@ type CheckinRequest struct {
 	Scopes          []string `json:"scopes"`
 	Intro           string   `json:"intro,omitempty"`
 	PlatformSession string   `json:"platform_session,omitempty"`
+	Spawn           string   `json:"spawn,omitempty"`
 }
 
 // ResolveRequest finds the callsign of a session by platform session id, or
@@ -212,6 +268,49 @@ type PostJobRequest struct {
 	Title string `json:"title"`
 	Body  string `json:"body,omitempty"`
 	To    string `json:"to,omitempty"` // pre-assign to a callsign
+	// Platform asks for spawned workers on this platform.
+	Platform string `json:"platform,omitempty"`
+}
+
+// SpawnRequest starts an agent session. Without Account the hub picks the
+// pooled account with the most free capacity, of Platform if given (or of
+// the job's platform).
+type SpawnRequest struct {
+	As       string `json:"as,omitempty"`
+	Account  string `json:"account,omitempty"`
+	Platform string `json:"platform,omitempty"`
+	Job      string `json:"job,omitempty"`
+	Cwd      string `json:"cwd"`
+	Scope    string `json:"scope,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Prompt   string `json:"prompt,omitempty"`
+}
+
+type SpawnResponse struct {
+	Spawn Spawn `json:"spawn"`
+}
+
+// Account is a configured account with its current load.
+type Account struct {
+	Name     string    `json:"name"`
+	Platform string    `json:"platform"`
+	Pool     bool      `json:"pool"`
+	Max      int       `json:"max"` // 0: no limit
+	Running  int       `json:"running"`
+	Limited  time.Time `json:"limited_until,omitzero"`
+	Reason   string    `json:"limit_reason,omitempty"`
+}
+
+type SpawnsResponse struct {
+	Spawns   []Spawn   `json:"spawns"`
+	Accounts []Account `json:"accounts"`
+	MaxTotal int       `json:"max_total"` // 0: no limit
+	Enabled  bool      `json:"enabled"`
+}
+
+type DespawnRequest struct {
+	As     string `json:"as,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type JobActionRequest struct {
@@ -253,4 +352,36 @@ const MsgHubRestarting = "hub restarting"
 
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+// SpawnSummary renders job.assign, spawn and account.limit events as one
+// phrase for `tail` and the dashboard; "" for other events.
+func (e Event) SpawnSummary() string {
+	switch {
+	case e.Type == EvJobAssign && e.Job != nil:
+		switch {
+		case e.Job.Assignee != "":
+			return e.Job.ID + " reserved for " + e.Job.Assignee
+		default:
+			return e.Job.ID + " open again"
+		}
+	case e.Type == EvSpawn && e.Spawn != nil:
+		sp := e.Spawn
+		switch {
+		case sp.Status == SpawnEnded:
+			return sp.ID + " ended: " + sp.Reason
+		case sp.Status == SpawnRunning:
+			return sp.ID + " checked in as " + sp.Callsign
+		case sp.Window != "":
+			return sp.ID + " started on " + sp.Account
+		}
+		out := sp.ID + " starting on " + sp.Account
+		if sp.Job != "" {
+			out += " for " + sp.Job
+		}
+		return out
+	case e.Type == EvAccountLimit && e.Limit != nil:
+		return e.Limit.Account + " limited until " + e.Limit.Until.Local().Format("15:04") + ": " + e.Limit.Reason
+	}
+	return ""
 }

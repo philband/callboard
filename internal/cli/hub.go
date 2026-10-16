@@ -25,7 +25,11 @@ func runHub(args []string) int {
 	if err := os.MkdirAll(config.StateDir(), 0o700); err != nil {
 		return fail(err)
 	}
-	h, err := hub.New(hub.Options{JournalPath: *journal, Version: Version})
+	cfg, err := config.Load()
+	if err != nil {
+		return fail(err)
+	}
+	h, err := hub.New(hub.Options{JournalPath: *journal, Version: Version, Spawn: cfg.Spawn, Runner: hub.NewTmux()})
 	if err != nil {
 		return fail(err)
 	}
@@ -33,6 +37,7 @@ func runHub(args []string) int {
 
 	ctx, stop := signalContext()
 	defer stop()
+	go h.Supervise(ctx, 5*time.Second)
 	lock := filepath.Join(config.StateDir(), "hub.lock")
 	errc := make(chan error, 1)
 	go func() { errc <- hub.Serve(ctx, h, *socket, lock, Version) }()

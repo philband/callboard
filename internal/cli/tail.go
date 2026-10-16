@@ -118,7 +118,7 @@ func eventSummary(ev api.Event) string {
 	case api.EvJobFail:
 		return fmt.Sprintf("%s failed %s", ev.Callsign, jobID(ev))
 	}
-	return ""
+	return ev.SpawnSummary()
 }
 
 func jobID(ev api.Event) string {

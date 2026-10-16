@@ -318,6 +318,9 @@ func summarize(e api.Event) string {
 	case api.EvJobFail:
 		return jobLine(e, "failed")
 	}
+	if s := e.SpawnSummary(); s != "" {
+		return s
+	}
 	return e.Type
 }
 

@@ -12,12 +12,13 @@ func init() {
 }
 
 func runPost(args []string) int {
-	fs := newFlags("post", "-as CS [-scope S] [-to CS] [-body TEXT] TITLE...")
+	fs := newFlags("post", "-as CS [-scope S] [-to CS] [-platform claude|codex] [-body TEXT] TITLE...")
 	var c common
 	c.bind(fs, true)
 	scopeFlag := fs.String("scope", "", "scope to post in (default: your primary scope)")
 	to := fs.String("to", "", "pre-assign the job to this callsign")
 	body := fs.String("body", "", "job detail; \"-\" reads stdin")
+	platform := fs.String("platform", "", "claude or codex: platform for a spawned worker")
 	if ok, code := parse(fs, args); !ok {
 		return code
 	}
@@ -39,7 +40,7 @@ func runPost(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	job, err := cl.PostJob(ctx, api.PostJobRequest{As: cs, Scope: *scopeFlag, Title: title, Body: text, To: *to})
+	job, err := cl.PostJob(ctx, api.PostJobRequest{As: cs, Scope: *scopeFlag, Title: title, Body: text, To: *to, Platform: *platform})
 	if err != nil {
 		return fail(err)
 	}

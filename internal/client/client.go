@@ -244,3 +244,23 @@ func (c *Client) Events(ctx context.Context, since uint64, wait time.Duration, s
 	err := c.do(ctx, http.MethodGet, "/v1/events", q, nil, &out)
 	return out, err
 }
+
+func (c *Client) Spawn(ctx context.Context, req api.SpawnRequest) (api.Spawn, error) {
+	var res api.SpawnResponse
+	err := c.do(ctx, http.MethodPost, "/v1/spawns", nil, req, &res)
+	return res.Spawn, err
+}
+
+func (c *Client) Spawns(ctx context.Context, all bool) (api.SpawnsResponse, error) {
+	q := url.Values{}
+	if all {
+		q.Set("all", "1")
+	}
+	var res api.SpawnsResponse
+	err := c.do(ctx, http.MethodGet, "/v1/spawns", q, nil, &res)
+	return res, err
+}
+
+func (c *Client) Despawn(ctx context.Context, id string, req api.DespawnRequest) error {
+	return c.do(ctx, http.MethodPost, "/v1/spawns/"+url.PathEscape(id)+"/stop", nil, req, nil)
+}

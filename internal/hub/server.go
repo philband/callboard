@@ -217,6 +217,36 @@ func Handler(h *Hub) http.Handler {
 		closeJob(w, r, h, api.JobFailed)
 	})
 
+	mux.HandleFunc("POST /v1/spawns", func(w http.ResponseWriter, r *http.Request) {
+		var req api.SpawnRequest
+		if !decode(w, r, &req) {
+			return
+		}
+		sp, err := h.Spawn(req)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, api.SpawnResponse{Spawn: sp})
+	})
+
+	mux.HandleFunc("GET /v1/spawns", func(w http.ResponseWriter, r *http.Request) {
+		all, _ := strconv.ParseBool(r.URL.Query().Get("all"))
+		writeJSON(w, http.StatusOK, h.Spawns(all))
+	})
+
+	mux.HandleFunc("POST /v1/spawns/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
+		var req api.DespawnRequest
+		if !decode(w, r, &req) {
+			return
+		}
+		if err := h.Despawn(r.PathValue("id"), req.As, req.Reason); err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	mux.HandleFunc("GET /v1/events", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		wait, err := waitParam(q.Get("wait"))

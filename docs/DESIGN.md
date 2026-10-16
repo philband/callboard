@@ -98,6 +98,9 @@ string such as `6h`, capped at 24h by the hub.
 | POST | `/v1/jobs/{id}/done` | `JobActionRequest` (result) → `JobResponse` |
 | POST | `/v1/jobs/{id}/fail` | `JobActionRequest` (reason in result) → `JobResponse` |
 | GET | `/v1/events?since=&wait=&scope=` | → `EventsResponse`; long-poll global stream |
+| POST | `/v1/spawns` | `SpawnRequest` → `SpawnResponse` |
+| GET | `/v1/spawns?all=` | → `SpawnsResponse` (spawns and account load) |
+| POST | `/v1/spawns/{id}/stop` | `DespawnRequest` → 204 |
 
 Every request that acts as a session carries `as`. Any such request refreshes
 that session's last-seen. The Go client in `internal/client` wraps this API
@@ -183,6 +186,42 @@ environments; where `ps` is unavailable, `CODEX_SANDBOX` identifies Codex.
 The matching session id env var (`CLAUDE_CODE_SESSION_ID`,
 `COPILOT_AGENT_SESSION_ID`, `CODEX_SESSION_ID`) is recorded for hook
 resolution.
+
+## Spawning (interview, 2026-10-16)
+
+| Topic | Decision |
+|---|---|
+| Trigger | Both: `callboard spawn` (human or coordinator) and an autoscaler that runs only while a coordinator is present in the job's scope. |
+| Session form | Interactive CLI in a window of a private tmux server, for Claude and Codex alike: attachable, no dependency on either platform's background daemon. |
+| Accounts | Configured list; spread by free slots across the pool; failover on usage or login limits. Accounts outside the pool are used only when named. |
+| Permissions | `bypass` by default, configurable globally and per account. |
+| Isolation | Worker decides (same checkout by default; the protocol lets it make a worktree). |
+| Lifetime | One job per session. After the job, a session using less than 10% of its context window is kept for the next job; otherwise it is stopped. The coordinator is never spawned. |
+| Caps | Global and per account, 0 meaning none. |
+| Platform | The poster chooses (`post --platform`); otherwise any. |
+
+The hub owns the supervisor: a 5s loop that answers start-up dialogs
+(screen text via `tmux capture-pane`, keys via `send-keys`), ends spawns
+whose window is gone or that never check in, reads transcripts for context
+use and limit errors (Claude: `<config>/projects/*/<session>.jsonl`, with the
+session id preset by `--session-id`; Codex: `rollout-*-<thread>.jsonl`,
+`token_count` and `usage_limit_exceeded`), retires finished workers and
+autoscales. Spawns, reservations (`job.assign`) and account limits are
+journaled events, so a restarted hub picks its spawns up again.
+
+A spawned process runs under `env -i` with the hub's environment minus
+anything that ties it to the agent session the hub was started from
+(`CLAUDE*`, `CODEX_*`, `COPILOT_*`, `CALLBOARD_AS`, `TMUX`), plus
+`CALLBOARD_SPAWN` and the account's config directory. The spawn id is also
+passed as `checkin --spawn` in the prompt, because interactive Codex runs
+the agent's commands in its shared app-server daemon, which does not see the
+TUI's environment; `PATH` and `CALLBOARD_*` reach it through
+`-c shell_environment_policy.set.*`.
+
+Measured on 2026-10-16: a fresh Claude Code session starts at about 43k
+tokens of context (21% of 200k), so with the default window and threshold a
+Claude worker is always stopped after its job. A fresh Codex worker used
+9% of its 258k window and was kept.
 
 ## Upgrading the binary
 

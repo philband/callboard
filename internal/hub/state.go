@@ -15,6 +15,7 @@ import (
 
 	"github.com/philband/callboard/internal/api"
 	"github.com/philband/callboard/internal/build"
+	"github.com/philband/callboard/internal/config"
 )
 
 // Error carries an HTTP status for the API layer.
@@ -40,6 +41,12 @@ type Options struct {
 	Version     string
 	// Now is overridable for tests.
 	Now func() time.Time
+	// Spawn configures accounts for spawned sessions; Runner starts them.
+	// Spawning is off without either.
+	Spawn  config.Spawn
+	Runner Runner
+	// Probe reads spawned sessions' transcripts (default: readTranscript).
+	Probe ProbeFunc
 }
 
 // Hub holds all state behind one mutex. Every mutation is an Event that is
@@ -62,6 +69,22 @@ type Hub struct {
 	now      func() time.Time
 	version  string
 	build    build.Info
+
+	nspawn     int
+	spawns     map[string]*api.Spawn
+	spawnOrder []string
+	limits     map[string]api.Limit
+	spawnCfg   config.Spawn
+	runner     Runner
+	probe      ProbeFunc
+	// waiting counts in-flight inbox long polls per callsign. A coordinator
+	// blocked in `wait` is present even when its last-seen is old.
+	waiting map[string]int
+	// Supervisor bookkeeping, touched only by the supervisor goroutine:
+	// kept maps a spawn to the job after which it was kept alive, answered
+	// counts the start-up dialogs answered for it.
+	kept     map[string]string
+	answered map[string]int
 }
 
 // New creates a hub and replays the journal if one is configured.
@@ -72,6 +95,14 @@ func New(opts Options) (*Hub, error) {
 		jobs:     map[string]*api.Job{},
 		changed:  make(chan struct{}),
 		closing:  make(chan struct{}),
+		spawns:   map[string]*api.Spawn{},
+		limits:   map[string]api.Limit{},
+		waiting:  map[string]int{},
+		kept:     map[string]string{},
+		answered: map[string]int{},
+		spawnCfg: opts.Spawn,
+		runner:   opts.Runner,
+		probe:    opts.Probe,
 		now:      opts.Now,
 		version:  opts.Version,
 		build:    build.This(),
@@ -81,6 +112,9 @@ func New(opts Options) (*Hub, error) {
 	}
 	if h.now == nil {
 		h.now = time.Now
+	}
+	if h.probe == nil {
+		h.probe = readTranscript
 	}
 	h.sessions[api.Human] = &api.Session{Callsign: api.Human, Name: "human", Platform: "human"}
 	if opts.JournalPath != "" {
@@ -182,9 +216,18 @@ func (h *Hub) apply(ev api.Event) {
 		j := *ev.Job
 		h.jobs[j.ID] = &j
 		h.jobOrder = append(h.jobOrder, j.ID)
-	case api.EvJobClaim, api.EvJobDone, api.EvJobFail:
+	case api.EvJobClaim, api.EvJobDone, api.EvJobFail, api.EvJobAssign:
 		j := *ev.Job
 		h.jobs[j.ID] = &j
+	case api.EvSpawn:
+		sp := *ev.Spawn
+		if _, ok := h.spawns[sp.ID]; !ok {
+			h.nspawn++
+			h.spawnOrder = append(h.spawnOrder, sp.ID)
+		}
+		h.spawns[sp.ID] = &sp
+	case api.EvAccountLimit:
+		h.limits[ev.Limit.Account] = *ev.Limit
 	}
 }
 
@@ -278,11 +321,17 @@ func (h *Hub) Checkin(req api.CheckinRequest) (api.CheckinResponse, error) {
 		Scopes:          req.Scopes,
 		Intro:           req.Intro,
 		PlatformSession: req.PlatformSession,
+		Spawn:           req.Spawn,
 		CheckedInAt:     now,
 		LastSeen:        now,
 	}
 	if s.Scopes == nil {
 		s.Scopes = []string{}
+	}
+	if s.Spawn != "" {
+		if err := h.linkSpawn(&s); err != nil {
+			return api.CheckinResponse{}, err
+		}
 	}
 	if _, err := h.commit(api.Event{Type: api.EvCheckin, Session: &s}); err != nil {
 		return api.CheckinResponse{}, err
@@ -450,6 +499,18 @@ func (h *Hub) post(from, to, kind, body, ref string) (api.Message, []string, err
 func (h *Hub) Inbox(ctx context.Context, as string, wait time.Duration, peek bool) ([]api.Message, error) {
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
+	if wait > 0 {
+		h.mu.Lock()
+		h.waiting[as]++
+		h.mu.Unlock()
+		defer func() {
+			h.mu.Lock()
+			if h.waiting[as]--; h.waiting[as] <= 0 {
+				delete(h.waiting, as)
+			}
+			h.mu.Unlock()
+		}()
+	}
 	for {
 		h.mu.Lock()
 		if _, err := h.touch(as); err != nil {
@@ -573,6 +634,7 @@ func (h *Hub) PostJob(req api.PostJobRequest) (api.Job, error) {
 		Body:     req.Body,
 		PostedBy: req.As,
 		Assignee: req.To,
+		Platform: normPlatform(req.Platform),
 		Status:   api.JobOpen,
 		PostedAt: h.now(),
 	}
